@@ -1,0 +1,6 @@
+external/riscv-tests
+fs.img
+
+build/
+.vscode/
+.cache/

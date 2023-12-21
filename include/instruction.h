@@ -57,50 +57,41 @@ struct Instruction
 
     u8 get_rs1() const
     {
-        return (instruction >> 15) & 0b1111;
+        return (instruction >> 15) & 0b11111;
     }
 
     u8 get_rs2() const
     {
-        return (instruction >> 20) & 0b1111;
+        return (instruction >> 20) & 0b11111;
     }
 
-    u16 get_imm(const Type type) const
+    u64 get_imm(const Type type) const
     {
         switch (type)
         {
             case Type::I:
-                return (instruction >> 20) & 0b111111111111;
+                // Sign extend then shift down
+                return ((i64)(i32)(instruction & 0xfff00000)) >> 20;
 
             case Type::S:
-            {
-                u16 lower = (instruction >> 7) & 0b11111;
-                u16 upper = (instruction >> 25) & 0b1111111;
-                return (upper << 5) | lower;
-            }
+                // Sign extend then shift down, then OR with lower bits
+                return ((i64)(i32)(instruction & 0xfe000000) >> 20) |
+                    ((instruction >> 7) & 0x1f);
 
             case Type::B:
-            {
-                // TODO: clean
-                return ((int64_t)(int32_t)(instruction & 0x80000000) >> 19)
+                return ((i64)(i32)(instruction & 0x80000000) >> 19)
                 | ((instruction & 0x80) << 4)
                 | ((instruction >> 20) & 0x7e0)
                 | ((instruction >> 7) & 0x1e);
-            }
 
             case Type:: U:
-                // TODO: clean
-                return instruction & 0xfffff999;
-            break;
+                return ((i64)(i32)(instruction & 0xfffff000)) >> 12;
 
             case Type::J:
-            {
-                // TODO: clean
-                return (uint64_t)((int64_t)(int32_t)(instruction & 0x80000000) >> 11)
+                return (u64)((i64)(i32)(instruction & 0x80000000) >> 11)
                 | (instruction & 0xff000)
                 | ((instruction >> 9) & 0x800)
                 | ((instruction >> 20) & 0x7fe);
-            }
 
             case Type::R:
             default:
@@ -111,6 +102,7 @@ struct Instruction
 
     u8 get_shamt() const
     {
-        return (instruction >> 20) & 0b11111;
+        // shamt is 6 bits for RV64I, but 5 bits for RV32I
+        return (instruction >> 20) & 0b111111;
     }
 };

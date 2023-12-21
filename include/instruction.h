@@ -65,6 +65,11 @@ struct Instruction
         return (instruction >> 20) & 0b11111;
     }
 
+    u8 get_rs2_6_bits() const
+    {
+        return (instruction >> 20) & 0b111111;
+    }
+
     u64 get_imm(const Type type) const
     {
         switch (type)
@@ -85,7 +90,9 @@ struct Instruction
                 | ((instruction >> 7) & 0x1e);
 
             case Type:: U:
-                return ((i64)(i32)(instruction & 0xfffff000)) >> 12;
+                // No need to shift right by 12 as all opcodes using it
+                // ultimately then shift left by 12 :)
+                return ((i64)(i32)(instruction & 0xfffff000));
 
             case Type::J:
                 return (u64)((i64)(i32)(instruction & 0x80000000) >> 11)

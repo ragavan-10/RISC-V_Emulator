@@ -14,7 +14,9 @@ bool opcodes_base(CPU& cpu, const Instruction& instruction)
         {
             switch (funct3)
             {
-                case OR: _or(cpu, instruction); break;
+                case ADD:   _add(cpu, instruction); break;
+                case OR:    _or (cpu, instruction); break;
+                case SLTU:  sltu(cpu, instruction); break;
                 default: return false;
             }
             break;
@@ -60,7 +62,12 @@ bool opcodes_base(CPU& cpu, const Instruction& instruction)
             const u8 funct7 = instruction.get_funct7();
 
             if (rs2 == ECALL && funct7 == 0)
-                throw std::runtime_error("ecall, x10 = " + std::to_string(cpu.registers[10]) + " (0 = pass)");
+            {
+                if (cpu.registers[10] == 0)
+                    throw std::runtime_error("pass");
+                else
+                    throw std::runtime_error("ecall, x10 = " + std::to_string(cpu.registers[10]) + " (0 = pass)");
+            }
 
             if (rs2 == EBREAK && funct7 == 0)
                 throw std::runtime_error("ebreak");
@@ -111,9 +118,24 @@ bool opcodes_base(CPU& cpu, const Instruction& instruction)
     return true;
 }
 
+void _add(CPU& cpu, const Instruction& instruction)
+{
+    cpu.registers[instruction.get_rd()] =
+        cpu.registers[instruction.get_rs1()] +
+        cpu.registers[instruction.get_rs2()];
+}
+
 void _or(CPU& cpu, const Instruction& instruction)
 {
     cpu.registers[instruction.get_rd()] = instruction.get_rs1() | instruction.get_rs2();
+}
+
+void sltu(CPU& cpu, const Instruction& instruction)
+{
+    // Unsigned comparison between rs1 and rs2 (i.e. zero extends)
+    const u64 rs1 = cpu.registers[instruction.get_rs1()];
+    const u64 rs2 = cpu.registers[instruction.get_rs2()];
+    cpu.registers[instruction.get_rd()] = (rs1 < rs2) ? 1 : 0;
 }
 
 void addi(CPU& cpu, const Instruction& instruction)

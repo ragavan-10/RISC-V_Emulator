@@ -2,6 +2,7 @@
 #include "types.h"
 #include "bus.h"
 #include "csrs.h"
+#include "exceptions.h"
 
 class CPU
 {
@@ -28,6 +29,9 @@ public:
     */
     u64 registers[32] = {};
     u64 pc = 0;
+    Bus bus;
+
+    PrivilegeLevel privilege_level = PrivilegeLevel::Machine;
 
     // Supervisor Protection and Translation
     UnimplementedCSR satp;              // Supervisor address translation and protection
@@ -38,7 +42,7 @@ public:
     // Machine trap setup
     MStatus mstatus = {};               // Status bits
     UnimplementedCSR misa = {};         // ISA and extensions
-    UnimplementedCSR medeleg = {};      // Machine exception delegation register
+    MEDeleg medeleg = {};               // Machine exception delegation register
     UnimplementedCSR mideleg = {};      // Machine interrupt delegation register
     UnimplementedCSR mie = {};          // Machine interrupt-enable register
     MTVec mtvec = {};                   // Machine trap-handler base address
@@ -47,11 +51,13 @@ public:
     // Machine trap handling
     UnimplementedCSR mscratch = {};     // Scratch register for machine trap handlers
     MEPC mepc = {};                     // Machine exception program counter
-    UnimplementedCSR mcause = {};       // Machine trap cause
-    UnimplementedCSR mtval = {};        // Machine bad address or instruction
+    MCause mcause = {};                 // Machine trap cause
+    DefaultCSR mtval = {};              // Machine bad address or instruction
     UnimplementedCSR mip = {};          // Machine interrupt pending
     UnimplementedCSR mtinst = {};       // Machine trap instruction (transformed)
     UnimplementedCSR mtval2 = {};       // Machine bad guest physical address
 
-    Bus bus;
+    // Exceptions
+    void raise_exception(const Exception exception, const u64 info = 0);
+    bool exception_did_occur = false;
 };

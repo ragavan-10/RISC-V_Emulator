@@ -1,5 +1,6 @@
 #pragma once
 #include "types.h"
+#include "exceptions.h"
 #include <cstring>
 #include <cassert>
 #include <iostream>
@@ -28,12 +29,14 @@
 
 enum class PrivilegeLevel
 {
-    User,
-    Supervisor,
-    Hypervisor,
-    Machine,
-    Debug
+    User = 0,
+    Supervisor = 1,
+    Hypervisor = 2,
+    Machine = 3,
+    Debug = 4
 };
+
+class CPU;
 
 /*
     Each CSR is 12 bits:
@@ -112,11 +115,11 @@ struct CSR
         }
     }
 
-    virtual void write(const u64 value) = 0;
-    virtual u64 read() = 0;
+    virtual void write(const u64 value, CPU& cpu) = 0;
+    virtual u64 read(CPU& cpu) = 0;
 };
 
-struct MTVec: CSR
+struct MTVec : CSR
 {
     u64 address;
     enum class Mode
@@ -125,7 +128,7 @@ struct MTVec: CSR
         Vectored = 1
     } mode;
 
-    void write(const u64 value) override
+    void write(const u64 value, CPU&) override
     {
         // TODO: check is aligned to 4-byte boundary
         address = value & 0xfffffffffffffffc;
@@ -136,30 +139,49 @@ struct MTVec: CSR
             mode = Mode::Direct;
     }
 
-    u64 read() override
+    u64 read(CPU&) override
     {
         return address | (u64)mode;
     }
 };
 
-struct MEPC: CSR
+struct MEPC : CSR
 {
     u64 address;
 
-    void write(const u64 value) override
+    void write(const u64 value, CPU&) override
     {
         // WARL; lowest bit is always zero, and 2nd lowest is zero if IALIGN
         // can only be 32 (but we support 16, or will)
         address = value & 0xfffffffffffffffe;
     }
 
-    u64 read() override
+    u64 read(CPU&) override
     {
         // Whenever IALIGN=32, bit mepc[1] is masked on reads so that it appears
         // to be 0. This masking occurs also for the implicit read by the MRET instruction.
         // Though masked, mepc[1] remains writable when IALIGN=32.
         std::cout << "TODO: respect IALIGN" << std::endl;
         return address;
+    }
+};
+
+struct MCause : CSR
+{
+    bool interrupt;
+    u64 exception_code;
+
+    void write(const u64 value, CPU&) override
+    {
+        // Code is WLRL; not required to raise exception but could if we wanted to
+        // Interrupt is set if trap was caused by an interrupt. TODO: emulate
+        interrupt = false;
+        exception_code = value;
+    }
+
+    u64 read(CPU&) override
+    {
+        return exception_code & 0x7fffffffffffffff;
     }
 };
 
@@ -201,7 +223,7 @@ struct MStatus : CSR
         memset(&fields, 0, sizeof(MStatus));
     }
 
-    void write(const u64 value) override
+    void write(const u64 value, CPU&) override
     {
         memcpy(&fields, &value, sizeof(Fields));
         fields.wpri_1 = 0;
@@ -211,7 +233,7 @@ struct MStatus : CSR
         fields.wpri_5 = 0;
     }
 
-    u64 read() override
+    u64 read(CPU&) override
     {
         u64 value;
         memcpy(&value, &fields, sizeof(Fields));
@@ -221,23 +243,52 @@ struct MStatus : CSR
     static_assert(sizeof(Fields) == sizeof(u64));
 };
 
+struct MEDeleg : CSR
+{
+    u64 data;
+
+    void write(const u64 value, CPU&) override {
+        data = value;
+    }
+
+    u64 read(CPU&) override {
+        return data;
+    }
+
+    bool should_delegate(const Exception type) const {
+        return ((data >> (u64)type) & 1) == 1;
+    }
+};
+
 struct MHartID : CSR
 {
-    void write(const u64 value) override {}
+    void write(const u64 value, CPU&) override {}
 
-    u64 read() override
-    {
+    u64 read(CPU&) override {
         // Only one core for now! :)
         return 0;
     }
 };
 
+// No special restrictions or bits; just holds a value
+struct DefaultCSR: CSR
+{
+    u64 value;
+
+    void write(const u64 value, CPU&) override {
+        this->value = value;
+    }
+
+    u64 read(CPU&) override {
+        return value;
+    }
+};
+
 struct UnimplementedCSR : CSR
 {
-    void write(const u64 value) override
-    {
+    void write(const u64 value, CPU&) override {
         assert(value == 0);
     }
 
-    u64 read() override { return 0; }
+    u64 read(CPU&) override { return 0; }
 };

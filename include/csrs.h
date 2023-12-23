@@ -4,7 +4,11 @@
 #include <cstring>
 #include <cassert>
 #include <iostream>
+#include <optional>
 
+#define CSR_SSTATUS     0x100
+#define CSR_SCOUNTER_EN 0x106
+#define CSR_SEPC        0x141
 #define CSR_SATP        0x180
 #define CSR_MSTATUS     0x300
 #define CSR_MISA        0x301
@@ -25,7 +29,18 @@
 #define CSR_PMPADDR0    0x3b0
 #define CSR_PMPADDR63   0x3ef
 #define CSR_MNSTATUS    0x744
-#define CSR_MHARTID     0xf14
+#define CSR_DEBUG_BEGIN 0x7a0
+#define CSR_TDATA1      0x7a1
+#define CSR_DEBUG_LIMIT 0x7af
+#define CSR_DEBUG_END   0x7bf
+#define CSR_MCYCLE      0xb00
+#define CSR_MINSTRET    0xb02
+#define CSR_CYCLE       0xc00
+#define CSR_INSTRET     0xc02
+#define CSR_MVENDOR_ID  0xf11
+#define CSR_MARCH_ID    0xf12
+#define CSR_MIMP_ID     0xf13
+#define CSR_MHART_ID    0xf14
 
 enum class PrivilegeLevel
 {
@@ -112,74 +127,129 @@ struct CSR
             case 0b01: return PrivilegeLevel::Supervisor;
             case 0b10: return PrivilegeLevel::Hypervisor;
             case 0b11: return PrivilegeLevel::Machine;
+            default:   return PrivilegeLevel::Machine;
         }
     }
 
-    virtual void write(const u64 value, CPU& cpu) = 0;
-    virtual u64 read(CPU& cpu) = 0;
+    bool increment(CPU& cpu)
+    {
+        std::optional<u64> value = read(cpu);
+        if (!value) return false;
+        return write(*value + 1, cpu);
+    }
+
+    virtual bool write(const u64 value, CPU& cpu) = 0;
+    virtual std::optional<u64> read(CPU& cpu) = 0;
+};
+
+// No special restrictions or bits; just holds a value
+struct DefaultCSR: CSR
+{
+    u64 value = 0;
+
+    bool write(const u64 value, CPU&) override
+    {
+        this->value = value;
+        return true;
+    }
+
+    std::optional<u64> read(CPU&) override {
+        return value;
+    }
 };
 
 struct MTVec : CSR
 {
-    u64 address;
+    u64 address = 0;
+
+    // WARL
     enum class Mode
     {
         Direct = 0,
         Vectored = 1
     } mode;
 
-    void write(const u64 value, CPU&) override
+    bool write(const u64 value, CPU&) override
     {
-        // TODO: check is aligned to 4-byte boundary
         address = value & 0xfffffffffffffffc;
         mode = (Mode)(value & 0b11);
 
-        // WARL for mode; >=2 is reserved
-        if ((u8)mode >= 2)
+        // WARL for mode; >=2 is reserved but we don't support vectored
+        // so force it to be 1
+        if ((u8)mode >= 1)
             mode = Mode::Direct;
+
+        return true;
     }
 
-    u64 read(CPU&) override
+    std::optional<u64> read(CPU&) override
     {
         return address | (u64)mode;
     }
 };
 
+struct MCounterEnable : DefaultCSR
+{
+    bool is_hardware_performance_monitor_enabled(const u32 number) const
+    {
+        return ((value >> number) & 0b1) == 1;
+    }
+
+    bool is_cycle_enabled() const
+    {
+        return is_hardware_performance_monitor_enabled(0);
+    }
+
+    bool is_time_enabled() const
+    {
+        return is_hardware_performance_monitor_enabled(1);
+    }
+
+    bool is_instret_enabled() const
+    {
+        return is_hardware_performance_monitor_enabled(2);
+    }
+};
+
 struct MEPC : CSR
 {
-    u64 address;
+    u64 address = 0;
 
-    void write(const u64 value, CPU&) override
+    bool write(const u64 value, CPU&) override
     {
         // WARL; lowest bit is always zero, and 2nd lowest is zero if IALIGN
         // can only be 32 (but we support 16, or will)
         address = value & 0xfffffffffffffffe;
+        return true;
     }
 
-    u64 read(CPU&) override
+    std::optional<u64> read(CPU&) override
     {
         // Whenever IALIGN=32, bit mepc[1] is masked on reads so that it appears
         // to be 0. This masking occurs also for the implicit read by the MRET instruction.
         // Though masked, mepc[1] remains writable when IALIGN=32.
-        std::cout << "TODO: respect IALIGN" << std::endl;
+        std::cout << "TODO: respect IALIGN when adding C support" << std::endl;
         return address;
     }
 };
+
+struct SEPC : MEPC {};
 
 struct MCause : CSR
 {
     bool interrupt;
     u64 exception_code;
 
-    void write(const u64 value, CPU&) override
+    bool write(const u64 value, CPU&) override
     {
         // Code is WLRL; not required to raise exception but could if we wanted to
         // Interrupt is set if trap was caused by an interrupt. TODO: emulate
         interrupt = false;
         exception_code = value;
+        return true;
     }
 
-    u64 read(CPU&) override
+    std::optional<u64> read(CPU&) override
     {
         return exception_code & 0x7fffffffffffffff;
     }
@@ -193,8 +263,8 @@ struct MStatus : CSR
         u64 wpri_1: 25;
         u64 mbe:    1;
         u64 sbe:    1;
-        u64 sxl:    2;
-        u64 uxl:    2;
+        u64 sxl:    2; // warl
+        u64 uxl:    2; // warl
         u64 wpri_2: 9;
         u64 tsr:    1;
         u64 tw:     1;
@@ -215,80 +285,211 @@ struct MStatus : CSR
         u64 wpri_4: 1;
         u64 sie:    1;
         u64 wpri_5: 1;
-    };
-    Fields fields;
+    } fields;
 
     MStatus()
     {
-        memset(&fields, 0, sizeof(MStatus));
+        memset(&fields, 0, sizeof(Fields));
     }
 
-    void write(const u64 value, CPU&) override
+    bool write(const u64 value, CPU&) override
     {
-        memcpy(&fields, &value, sizeof(Fields));
-        fields.wpri_1 = 0;
-        fields.wpri_2 = 0;
-        fields.wpri_3 = 0;
-        fields.wpri_4 = 0;
-        fields.wpri_5 = 0;
+        // Don't set the wpri fields; keep them zero
+        fields.sd = (value >> 63) & 0x1;
+        fields.mbe = (value >> 37) & 0x1;
+        fields.sbe = (value >> 36) & 0x1;
+        fields.sxl = (value >> 34) & 0x3;
+        fields.uxl = (value >> 32) & 0x3;
+        fields.tsr = (value >> 22) & 0x1;
+        fields.tw = (value >> 21) & 0x1;
+        fields.tvm = (value >> 20) & 0x1;
+        fields.mxr = (value >> 19) & 0x1;
+        fields.sum = (value >> 18) & 0x1;
+        fields.mprv = (value >> 17) & 0x1;
+        fields.xs = (value >> 15) & 0x3;
+        fields.fs = (value >> 13) & 0x3;
+        fields.mpp = (value >> 11) & 0x3;
+        fields.vs = (value >> 9) & 0x3;
+        fields.spp = (value >> 8) & 0x1;
+        fields.mpie = (value >> 7) & 0x1;
+        fields.ube = (value >> 6) & 0x1;
+        fields.spie = (value >> 5) & 0x1;
+        fields.mie = (value >> 3) & 0x1;
+        fields.sie = (value >> 1) & 0x1;
+
+        // WARL for SXL and UXL
+        fields.sxl = 2; // xlen = 64
+        fields.uxl = 2; // xlen = 64
+
+        return true;
     }
 
-    u64 read(CPU&) override
+    std::optional<u64> read(CPU&) override
     {
-        u64 value;
-        memcpy(&value, &fields, sizeof(Fields));
+        u64 value = 0;
+        value |= ((u64)(fields.sd) << 63);
+        value |= ((u64)(fields.wpri_1) << 38);
+        value |= ((u64)(fields.mbe) << 37);
+        value |= ((u64)(fields.sbe) << 36);
+        value |= ((u64)(fields.sxl) << 34);
+        value |= ((u64)(fields.uxl) << 32);
+        value |= ((u64)(fields.wpri_2) << 23);
+        value |= ((u64)(fields.tsr) << 22);
+        value |= ((u64)(fields.tw) << 21);
+        value |= ((u64)(fields.tvm) << 20);
+        value |= ((u64)(fields.mxr) << 19);
+        value |= ((u64)(fields.sum) << 18);
+        value |= ((u64)(fields.mprv) << 17);
+        value |= ((u64)(fields.xs) << 15);
+        value |= ((u64)(fields.fs) << 13);
+        value |= ((u64)(fields.mpp) << 11);
+        value |= ((u64)(fields.vs) << 9);
+        value |= ((u64)(fields.spp) << 8);
+        value |= ((u64)(fields.mpie) << 7);
+        value |= ((u64)(fields.ube) << 6);
+        value |= ((u64)(fields.spie) << 5);
+        value |= ((u64)(fields.wpri_3) << 4);
+        value |= ((u64)(fields.mie) << 3);
+        value |= ((u64)(fields.wpri_4) << 2);
+        value |= ((u64)(fields.sie) << 1);
+        value |= (u64)(fields.wpri_5);
         return value;
     }
 
     static_assert(sizeof(Fields) == sizeof(u64));
 };
 
+struct SStatus: CSR
+{
+    // "In a straightforward implementation, reading or writing any
+    //  field in sstatus is equivalent to reading or writing the homonymous
+    //  field in mstatus."
+    // Hence there is no need to store any actual data; the below struct is
+    // merely for reference and has no instance :)
+    struct Fields
+    {
+        u64 sd: 1;      // shadowed
+        u64 wpri_1: 29;
+        u64 uxl: 2;     // shadowed
+        u64 wpri_2: 12;
+        u64 mxr: 1;     // shadowed
+        u64 sum: 1;     // shadowed
+        u64 wpri_3: 1;
+        u64 xs: 2;      // shadowed
+        u64 fs: 2;      // shadowed
+        u64 wpri_4: 2;
+        u64 vs: 2;      // shadowed
+        u64 spp: 1;     // shadowed
+        u64 wpri_5: 1;
+        u64 ube: 1;     // shadowed
+        u64 spie: 1;    // shadowed
+        u64 wpri_6: 3;
+        u64 sie: 1;     // shadowed
+        u64 wpri_7: 1;
+    };
+
+    bool write(const u64 value, CPU& cpu) override;
+    std::optional<u64> read(CPU& cpu) override;
+
+    static_assert(sizeof(Fields) == sizeof(u64));
+};
+
+struct MISA : CSR
+{
+    bool write(const u64, CPU&) override;
+    std::optional<u64> read(CPU& cpu) override;
+};
+
 struct MEDeleg : CSR
 {
-    u64 data;
+    u64 data = 0;
 
-    void write(const u64 value, CPU&) override {
-        data = value;
+    bool write(const u64 value, CPU&) override
+    {
+        // WARL: medeleg[11] is read-only zero
+        data = value & (~(1 << 11));
+        return true;
     }
 
-    u64 read(CPU&) override {
+    std::optional<u64> read(CPU&) override
+    {
         return data;
     }
 
-    bool should_delegate(const Exception type) const {
+    bool should_delegate(const Exception type) const
+    {
         return ((data >> (u64)type) & 1) == 1;
     }
 };
 
-struct MHartID : CSR
+struct MIDeleg : DefaultCSR
 {
-    void write(const u64 value, CPU&) override {}
-
-    u64 read(CPU&) override {
-        // Only one core for now! :)
-        return 0;
+    bool should_delegate(const Exception type) const
+    {
+        return ((value >> (u64)type) & 1) == 1;
     }
 };
 
-// No special restrictions or bits; just holds a value
-struct DefaultCSR: CSR
+struct MIP : CSR
 {
-    u64 value;
+    // CSR is XLEN long but bits 16 and above designated for platform or custom use
+    u16 bits = 0;
 
-    void write(const u64 value, CPU&) override {
-        this->value = value;
+    bool write(const u64 value, CPU&) override
+    {
+        // WRARL
+        bits = value & 0b0000101010101010;
+        return true;
     }
 
-    u64 read(CPU&) override {
-        return value;
+    std::optional<u64> read(CPU&) override
+    {
+        return bits;
     }
+
+    bool mei() const { return ((bits >> 11) & 1) == 1; }
+    bool sei() const { return ((bits >>  9) & 1) == 1; }
+    bool mti() const { return ((bits >>  7) & 1) == 1; }
+    bool sti() const { return ((bits >>  5) & 1) == 1; }
+    bool msi() const { return ((bits >>  3) & 1) == 1; }
+    bool ssi() const { return ((bits >>  1) & 1) == 1; }
+};
+
+// Same fields as MIP, but meip = meie, seip = seie, etc.
+struct MIE : MIP {};
+
+struct Cycle : CSR
+{
+    bool write(const u64 value, CPU&) override;
+    std::optional<u64> read(CPU&) override;
+};
+
+struct InstRet : Cycle
+{
+    std::optional<u64> read(CPU&) override;
 };
 
 struct UnimplementedCSR : CSR
 {
-    void write(const u64 value, CPU&) override {
+    bool write(const u64 value, CPU&) override
+    {
         assert(value == 0);
+        return true;
     }
 
-    u64 read(CPU&) override { return 0; }
+    std::optional<u64> read(CPU&) override { return 0; }
+};
+
+// For values that are read-only and only ever return 0 - (eg marchid)
+struct BlankCSR : CSR
+{
+    bool write(const u64 value, CPU&) override
+    {
+        return true;
+    }
+
+    std::optional<u64> read(CPU&) override
+    {
+        return 0;
+    }
 };

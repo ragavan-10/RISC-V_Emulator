@@ -11,10 +11,18 @@ CPU::CPU(const u64 ram_size) : bus(ram_size)
     registers[0] = 0;
     registers[2] = Bus::ram_base + ram_size;
     pc = Bus::ram_base;
+
 }
 
-void CPU::cycle()
+void CPU::do_cycle()
 {
+    // Check is 32-bit aligned (remove when compressed support added)
+    if ((pc & 0b11) != 0)
+    {
+        raise_exception(Exception::InstructionAddressMisaligned, pc);
+        return;
+    }
+
     // Fetch instruction... if we can!
     const std::optional<Instruction> instruction = { bus.read_32(pc) };
     if (!instruction)
@@ -31,10 +39,17 @@ void CPU::cycle()
         return;
     }
 
-    // TODO: check instruction alignment
+    // Check it's valid
+    if (instruction->instruction == 0xffffffff ||
+        instruction->instruction == 0)
+    {
+        raise_exception(Exception::IllegalInstruction, instruction->instruction);
+        return;
+    }
 
     const u8 opcode = instruction->get_opcode();
     const u8 funct3 = instruction->get_funct3();
+    const u8 funct7 = instruction->get_funct7();
 
     // Reset x0
     registers[0] = 0;
@@ -56,9 +71,11 @@ void CPU::cycle()
 
     if (!did_find_opcode)
         throw std::runtime_error(std::format(
-            "unknown opcode 0x{:x} with funct3 0x{:x} - raw = 0x{:x}, pc = 0x{:x}",
+            "unknown opcode 0x{:x} with funct3 0x{:x}, funct7 0x{:x}, rs2 0x{:x} - raw = 0x{:x}, pc = 0x{:x}",
             opcode,
             funct3,
+            funct7,
+            instruction->get_rs2(),
             instruction->instruction,
             pc
         ));
@@ -67,14 +84,13 @@ void CPU::cycle()
         pc += sizeof(u32);
 
     exception_did_occur = false;
+    mcycle.increment(*this);
+    minstret.increment(*this);
 }
 
 void CPU::trace()
 {
-    // if (pc == 0x800001b0)
-    //     for (int i = 0; i < 32; ++i)
-    //         std::cout << "x" << i << ": " << std::hex << registers[i] << std::endl;
-    std::cout << "0x" << std::hex << pc << std::endl;
+    std::cout << (int)privilege_level << ": 0x" << std::hex << pc << std::endl;
 }
 
 void CPU::raise_exception(const Exception exception, const u64 info)
@@ -102,7 +118,7 @@ void CPU::raise_exception(const Exception exception, const u64 info)
         privilege_level = PrivilegeLevel::Machine;
 
         // Set PC to mtvec
-        pc = mtvec.read(*this);
+        pc = *mtvec.read(*this);
 
         // Set mepc to virtual address of instruction that was interrupted
         mepc.write(original_pc, *this);

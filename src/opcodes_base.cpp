@@ -7,6 +7,7 @@
 u64 get_load_address(const CPU& cpu, const Instruction& instruction);
 u64 get_store_address(const CPU& cpu, const Instruction& instruction);
 u32 get_wide_shift_amount(const CPU& cpu, const Instruction& instruction);
+bool check_branch_alignment(CPU& cpu, const u64 target);
 
 bool opcodes_base(CPU& cpu, const Instruction& instruction)
 {
@@ -67,9 +68,8 @@ bool opcodes_base(CPU& cpu, const Instruction& instruction)
                 {
                     switch (funct7)
                     {
-                        case SRLI:  srli(cpu, instruction); break;
                         case SRAI:  srai(cpu, instruction); break;
-                        default:    return false;
+                        default:    srli(cpu, instruction); break;
                     }
                     break;
                 }
@@ -136,28 +136,34 @@ bool opcodes_base(CPU& cpu, const Instruction& instruction)
 
         case OPCODES_BASE_SYSTEM:
         {
-            // 0 = CSR instructions
+            // 0 = CSR instructions - except for ebreak
             if (funct3 != 0) return false;
 
             const u8 rs2 = instruction.get_rs2();
-            const u8 funct7 = instruction.get_funct7();
 
             if (rs2 == ECALL && funct7 == 0)
             {
                 if (cpu.registers[10] == 0)
-                    throw std::runtime_error("pass");
+                    throw std::string("pass");
                 else
-                    throw std::runtime_error("ecall, x10 = " + std::to_string(cpu.registers[10]) + " (0 = pass)");
+                    throw std::string("ecall, x10 = " + std::to_string(cpu.registers[10]) + " (0 = pass)");
             }
 
             if (rs2 == EBREAK && funct7 == 0)
-                throw std::runtime_error("ebreak");
+            {
+                // Used for syscalls, etc.
+                cpu.raise_exception(Exception::Breakpoint, 0);
+                return true;
+            }
 
             if (rs2 == URET && funct7 == 0)
                 throw std::runtime_error("uret");
 
             if (rs2 == 2 && funct7 == SRET)
-                throw std::runtime_error("sret");
+            {
+                sret(cpu, instruction);
+                return true;
+            }
 
             if (rs2 == 2 && funct7 == MRET)
             {
@@ -166,9 +172,17 @@ bool opcodes_base(CPU& cpu, const Instruction& instruction)
             }
 
             if (rs2 == 5 && funct7 == WFI)
-                throw std::runtime_error("wfi");
+            {
+                wfi(cpu, instruction);
+                return true;
+            }
 
-            if (funct7 == SFENCE_VMA)  throw std::runtime_error("sfence.vma");
+            if (funct7 == SFENCE_VMA)
+            {
+                sfence_vma(cpu, instruction);
+                return true;
+            }
+
             if (funct7 == HFENCE_BVMA) throw std::runtime_error("hfence.bvma");
             if (funct7 == HFENCE_GVMA) throw std::runtime_error("hfence.gvma");
 
@@ -178,7 +192,6 @@ bool opcodes_base(CPU& cpu, const Instruction& instruction)
         case OPCODES_BASE_FENCE:
         {
             // No cores; no need!
-            std::cout << "fence - ignoring" << std::endl;
             break;
         }
 
@@ -464,56 +477,77 @@ void sw(CPU& cpu, const Instruction& instruction)
 
 void beq(CPU& cpu, const Instruction& instruction)
 {
-    if (cpu.registers[instruction.get_rs1()] == cpu.registers[instruction.get_rs2()])
-        cpu.pc += instruction.get_imm(Instruction::Type::B) - 4;
+    const u64 target = instruction.get_imm(Instruction::Type::B);
+
+    if (cpu.registers[instruction.get_rs1()] == cpu.registers[instruction.get_rs2()] &&
+        check_branch_alignment(cpu, target))
+        cpu.pc += target - 4;
 }
 
 void bne(CPU& cpu, const Instruction& instruction)
 {
+    const u64 target = instruction.get_imm(Instruction::Type::B);
+
     if (cpu.registers[instruction.get_rs1()] !=
-        cpu.registers[instruction.get_rs2()])
-        cpu.pc += instruction.get_imm(Instruction::Type::B) - 4;
+        cpu.registers[instruction.get_rs2()] &&
+        check_branch_alignment(cpu, target))
+        cpu.pc += target - 4;
 }
 
 void blt(CPU& cpu, const Instruction& instruction)
 {
+    const u64 target = instruction.get_imm(Instruction::Type::B);
+
     if ((i64)cpu.registers[instruction.get_rs1()] <
-        (i64)cpu.registers[instruction.get_rs2()])
-        cpu.pc += instruction.get_imm(Instruction::Type::B) - 4;
+        (i64)cpu.registers[instruction.get_rs2()] &&
+        check_branch_alignment(cpu, target))
+        cpu.pc += target - 4;
 }
 
 void bge(CPU& cpu, const Instruction& instruction)
 {
+    const u64 target = instruction.get_imm(Instruction::Type::B);
+
     if ((i64)cpu.registers[instruction.get_rs1()] >=
-        (i64)cpu.registers[instruction.get_rs2()])
-        cpu.pc += instruction.get_imm(Instruction::Type::B) - 4;
+        (i64)cpu.registers[instruction.get_rs2()] &&
+        check_branch_alignment(cpu, target))
+        cpu.pc += target - 4;
 }
 
 void bltu(CPU& cpu, const Instruction& instruction)
 {
+    const u64 target = instruction.get_imm(Instruction::Type::B);
+
     if (cpu.registers[instruction.get_rs1()] <
-        cpu.registers[instruction.get_rs2()])
-        cpu.pc += instruction.get_imm(Instruction::Type::B) - 4;
+        cpu.registers[instruction.get_rs2()] &&
+        check_branch_alignment(cpu, target))
+        cpu.pc += target - 4;
 }
 
 void bgeu(CPU& cpu, const Instruction& instruction)
 {
+    const u64 target = instruction.get_imm(Instruction::Type::B);
+
     if (cpu.registers[instruction.get_rs1()] >=
-        cpu.registers[instruction.get_rs2()])
-        cpu.pc += instruction.get_imm(Instruction::Type::B) - 4;
+        cpu.registers[instruction.get_rs2()] &&
+        check_branch_alignment(cpu, target))
+        cpu.pc += target - 4;
 }
 
 void jal(CPU& cpu, const Instruction& instruction)
 {
+    // Add offset to program counter - sign extension done for us
+    const i64 offset = instruction.get_imm(Instruction::Type::J);
+
+    // Alignment check (see jalr)
+    if (!check_branch_alignment(cpu, offset))
+        return;
+
     // Target register will contain pc + 4 (*not* for reason below though!)
     cpu.registers[instruction.get_rd()] = cpu.pc + 4;
 
-    // Add offset to program counter - sign extension done for us
-    const i64 offset = instruction.get_imm(Instruction::Type::J);
-    cpu.pc += offset;
-
     // Minus 4 because 4 is always added anyway by caller
-    cpu.pc -= 4;
+    cpu.pc += offset - 4;
 }
 
 void jalr(CPU& cpu, const Instruction& instruction)
@@ -524,7 +558,13 @@ void jalr(CPU& cpu, const Instruction& instruction)
 
     i64 offset = instruction.get_imm(Instruction::Type::I);
     offset += cpu.registers[instruction.get_rs1()];
-    offset &= 0xfffffffffffffffc;
+    offset &= 0xfffffffffffffffe;
+
+    // An instruction address misaligned exception is generated on a
+    // taken branch or unconditional jump if the target address is not
+    // four-byte aligned
+    if (!check_branch_alignment(cpu, offset))
+        return;
 
     cpu.registers[instruction.get_rd()] = cpu.pc + 4;
     cpu.pc = (u64)offset - 4;
@@ -542,6 +582,34 @@ void auipc(CPU& cpu, const Instruction& instruction)
     cpu.registers[instruction.get_rd()] = cpu.pc + offset;
 }
 
+void sret(CPU& cpu, const Instruction& instruction)
+{
+    // When TSR=1, attempts to execute SRET while executing in S-mode
+    // will raise an illegal instruction exception.
+    if (cpu.mstatus.fields.tsr == 1)
+    {
+        cpu.raise_exception(Exception::IllegalInstruction, *cpu.bus.read_32(cpu.pc));
+        return;
+    }
+
+    // Otherwise virtually the same as mret (see below)
+
+    if (cpu.privilege_level < PrivilegeLevel::Supervisor)
+    {
+        cpu.raise_exception(Exception::IllegalInstruction, *cpu.bus.read_32(cpu.pc));
+        return;
+    }
+
+    if (cpu.mstatus.fields.spp != (u64)PrivilegeLevel::Machine)
+        cpu.mstatus.fields.mprv = 0;
+
+    cpu.pc = *read_csr(cpu, CSR_SEPC) - 4;
+    cpu.privilege_level = (PrivilegeLevel)cpu.mstatus.fields.spp;
+    cpu.mstatus.fields.sie = cpu.mstatus.fields.spie;
+    cpu.mstatus.fields.spie = 1;
+    cpu.mstatus.fields.spp = 0;
+}
+
 void mret(CPU& cpu, const Instruction& instruction)
 {
     /*
@@ -555,15 +623,51 @@ void mret(CPU& cpu, const Instruction& instruction)
     // Must be in machine mode or higher
     if (cpu.privilege_level < PrivilegeLevel::Machine)
     {
-        cpu.raise_exception(Exception::IllegalInstruction, cpu.pc);
+        cpu.raise_exception(Exception::IllegalInstruction, *cpu.bus.read_32(cpu.pc));
         return;
     }
 
-    cpu.pc = read_csr(cpu, CSR_MEPC) - 4;
+    if (cpu.mstatus.fields.mpp != (u64)PrivilegeLevel::Machine)
+        cpu.mstatus.fields.mprv = 0;
+
+    cpu.pc = *read_csr(cpu, CSR_MEPC) - 4;
     cpu.privilege_level = (PrivilegeLevel)cpu.mstatus.fields.mpp;
     cpu.mstatus.fields.mie = cpu.mstatus.fields.mpie;
     cpu.mstatus.fields.mpie = 1;
     cpu.mstatus.fields.mpp = 0;
+}
+
+void wfi(CPU& cpu, const Instruction& instruction)
+{
+    /*
+        The Wait for Interrupt instruction (WFI) provides a hint to the
+        implementation that the current hart can be stalled until an interrupt
+        might need servicing.
+
+        The purpose of the WFI instruction is to provide a hint to the
+        implementation, and so a legal implementation is to simply implement
+        WFI as a NOP.
+
+        This instruction may raise an illegal instruction exception when TW=1
+        in mstatus.
+     */
+
+    if (cpu.mstatus.fields.tw == 1)
+    {
+        cpu.raise_exception(Exception::IllegalInstruction, *cpu.bus.read_32(cpu.pc));
+        return;
+    }
+
+    std::cout << "TODO: WFI; suspend thread" << std::endl;
+}
+
+void sfence_vma(CPU& cpu, const Instruction& instruction)
+{
+    // Synchronises updates to in-memory memory-management data structres with
+    // current execution. i.e. glorified NOP for us.
+    // Have to trap when TVM = 1.
+    if (cpu.mstatus.fields.tvm == 1)
+        cpu.raise_exception(Exception::IllegalInstruction, *cpu.bus.read_32(cpu.pc));
 }
 
 void lwu(CPU& cpu, const Instruction& instruction)
@@ -690,4 +794,15 @@ u32 get_wide_shift_amount(const CPU&, const Instruction& instruction)
     // SLLIW, SRLIW and SRAIW generate an illegal instruction exception
     // if imm[5] != 0. TODO: emulate!
     return instruction.get_imm(Instruction::Type::I) & 0b11111;
+}
+
+bool check_branch_alignment(CPU& cpu, const u64 target)
+{
+    if ((target & 0b11) != 0)
+    {
+        cpu.raise_exception(Exception::InstructionAddressMisaligned, 0);
+        return false;
+    }
+
+    return true;
 }

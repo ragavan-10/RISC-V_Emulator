@@ -8,7 +8,7 @@ class CPU
 {
 public:
     CPU(const uint64_t size);
-    void cycle();
+    void do_cycle();
     void trace();
 
     /*
@@ -33,31 +33,65 @@ public:
 
     PrivilegeLevel privilege_level = PrivilegeLevel::Machine;
 
+    // Supervisor trap setup
+    SStatus sstatus = {};               // Status bits; effective shadow of mstatus
+    DefaultCSR scounteren = {};         // Supervisor counter enable
+
+    // Supervisor trap handilng
+    SEPC sepc = {};
+
     // Supervisor Protection and Translation
     UnimplementedCSR satp;              // Supervisor address translation and protection
 
-    // Machine information registers
-    MHartID mhartid = {}; // ID of hart
-
     // Machine trap setup
     MStatus mstatus = {};               // Status bits
-    UnimplementedCSR misa = {};         // ISA and extensions
+    MISA misa = {};                     // ISA and extensions
     MEDeleg medeleg = {};               // Machine exception delegation register
-    UnimplementedCSR mideleg = {};      // Machine interrupt delegation register
-    UnimplementedCSR mie = {};          // Machine interrupt-enable register
+    MIDeleg mideleg = {};               // Machine interrupt delegation register
+    MIE mie = {};                       // Machine interrupt-enable register
     MTVec mtvec = {};                   // Machine trap-handler base address
-    UnimplementedCSR mcounteren = {};   // Machine counter enable
+    MCounterEnable mcounteren = {};     // Machine counter enable
 
     // Machine trap handling
-    UnimplementedCSR mscratch = {};     // Scratch register for machine trap handlers
+    DefaultCSR mscratch = {};           // Scratch register for machine trap handlers
     MEPC mepc = {};                     // Machine exception program counter
     MCause mcause = {};                 // Machine trap cause
     DefaultCSR mtval = {};              // Machine bad address or instruction
-    UnimplementedCSR mip = {};          // Machine interrupt pending
+    MIP mip = {};                       // Machine interrupt pending
     UnimplementedCSR mtinst = {};       // Machine trap instruction (transformed)
     UnimplementedCSR mtval2 = {};       // Machine bad guest physical address
+
+    // Machine counters / timers
+    DefaultCSR mcycle = {};             // Cycle count
+    DefaultCSR minstret = {};           // Counts instructions performed ("retired")
+
+    // Debug registers
+    DefaultCSR debug_registers[CSR_DEBUG_END - CSR_DEBUG_BEGIN + 1] = {};
+
+    // Unprivileged counters / timers
+    Cycle cycle = {};                   // Cycle counter; shadows mcycle
+    InstRet instret = {};               // Shadows minstret
+
+    // Machine information registers
+    BlankCSR mvendorid = {};            // Vendor ID
+    BlankCSR marchid = {};              // Arch ID
+    BlankCSR mimpid = {};               // Implementation ID
+    BlankCSR mhartid = {};              // ID of hart
 
     // Exceptions
     void raise_exception(const Exception exception, const u64 info = 0);
     bool exception_did_occur = false;
+
+    // Extensions
+    static consteval u64 get_supported_extensions()
+    {
+        // 26 bits - one for each letter of alphabet, corresponding to exceptions
+        // In addition, S and U represent support for supervisor and user mode.
+        // The "I" bit is set for RV64I, etc., and "E" is set for RV64E, etc.
+        u64 bits = 0;
+        bits |= (1 << 8);  // E
+        bits |= (1 << 18); // S
+        bits |= (1 << 20); // U
+        return bits;
+    }
 };

@@ -1,5 +1,7 @@
 #include "csrs.h"
 #include "cpu.h"
+#include "instruction.h"
+#include <format>
 
 /*
     Some CSRs require access to the CPU.
@@ -78,7 +80,7 @@ std::optional<u64> Cycle::read(CPU& cpu)
     if (cpu.privilege_level < PrivilegeLevel::Machine &&
         !cpu.mcounteren.is_cycle_enabled())
     {
-        cpu.raise_exception(Exception::IllegalInstruction, *cpu.bus.read_32(cpu.pc));
+        cpu.raise_exception(Exception::IllegalInstruction);
         return std::nullopt;
     }
 
@@ -91,10 +93,23 @@ std::optional<u64> InstRet::read(CPU& cpu)
     if (cpu.privilege_level < PrivilegeLevel::Machine &&
         !cpu.mcounteren.is_instret_enabled())
     {
-        cpu.raise_exception(Exception::IllegalInstruction, *cpu.bus.read_32(cpu.pc));
+        cpu.raise_exception(Exception::IllegalInstruction);
         return std::nullopt;
     }
 
     return cpu.minstret.read(cpu);
 }
 
+bool UnimplementedCSR::write(const u64 value, CPU& cpu)
+{
+    if (value == 0) return true;
+
+    // Work out CSR address for nice error message
+    const Instruction instruction = *cpu.bus.read_32(cpu.pc);
+    const u64 address = instruction.get_imm(Instruction::Type::I) & 0xfff;
+    throw std::runtime_error(std::format(
+        "unimplemented CSR with address 0x{:x}, value = 0x{:x}",
+        address,
+        value
+    ));
+}

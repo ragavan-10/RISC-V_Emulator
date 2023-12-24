@@ -2,6 +2,7 @@
 #include "instruction.h"
 #include "opcodes_base.h"
 #include "opcodes_zicsr.h"
+#include "opcodes_m.h"
 #include <iostream>
 #include <format>
 
@@ -64,6 +65,13 @@ void CPU::do_cycle()
                 did_find_opcode = opcodes_zicsr(*this, *instruction);
                 break;
 
+            case OPCODES_M:
+            case OPCODES_M_32:
+                // Distinguished from OPCODES_BASE_R_TYPE[_32] by funct7
+                if (funct7 == OPCODES_M_FUNCT_7)
+                    did_find_opcode = opcodes_m(*this, *instruction);
+                break;
+
             default:
                 break;
         }
@@ -93,7 +101,12 @@ void CPU::trace()
     std::cout << (int)privilege_level << ": 0x" << std::hex << pc << std::endl;
 }
 
-void CPU::raise_exception(const Exception exception, const u64 info)
+void CPU::raise_exception(const Exception exception)
+{
+    raise_exception(exception, get_exception_cause(exception));
+}
+
+void CPU::raise_exception(const Exception exception, const u64 cause)
 {
     /*
         By default, all traps at any privilege level are handled in machine mode,
@@ -127,7 +140,7 @@ void CPU::raise_exception(const Exception exception, const u64 info)
         mcause.write((u64)exception, *this);
 
         // Set mtval to (optional) exception-specific information
-        mtval.write(info, *this);
+        mtval.write(cause, *this);
 
         // Set PIE bit in mstatus to MIE bit ("IE" = interrupt enable)
         mstatus.fields.mpie = mstatus.fields.mie;
@@ -138,4 +151,25 @@ void CPU::raise_exception(const Exception exception, const u64 info)
         // Record previous privilege
         mstatus.fields.mpp = (u64)original_privilege_level;
     }
+}
+
+u64 CPU::get_exception_cause(const Exception exception)
+{
+    switch (exception)
+    {
+        case Exception::IllegalInstruction:
+            return *bus.read_32(pc);
+
+        case Exception::LoadAccessFault:
+            return pc;
+
+        case Exception::StoreOrAMOAccessFault:
+            return pc;
+
+        default:
+            throw std::runtime_error(
+                "unable to determine exception casue - "
+                "wrong overload used"
+            );
+    };
 }

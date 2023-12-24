@@ -79,7 +79,9 @@ public:
     BlankCSR mhartid = {};              // ID of hart
 
     // Exceptions
-    void raise_exception(const Exception exception, const u64 info = 0);
+    void raise_exception(const Exception exception);
+    void raise_exception(const Exception exception, const u64 cause);
+    u64 get_exception_cause(const Exception exception);
     bool exception_did_occur = false;
 
     // Extensions
@@ -90,6 +92,7 @@ public:
         // The "I" bit is set for RV64I, etc., and "E" is set for RV64E, etc.
         u64 bits = 0;
         bits |= (1 << 8);  // E
+        bits |= (1 << 12); // U
         bits |= (1 << 18); // S
         bits |= (1 << 20); // U
         return bits;

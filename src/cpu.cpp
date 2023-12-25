@@ -12,8 +12,10 @@ CPU::CPU(const u64 ram_size) : bus(ram_size)
     // Set x0 to 0, sp to end of memory and pc to start of RAM
     registers[0] = 0;
     registers[2] = Bus::ram_base + ram_size;
-    pc = Bus::ram_base;
+    pc = Bus::programs_base;
 
+
+    registers[10] = 0;
 }
 
 void CPU::do_cycle()
@@ -103,7 +105,7 @@ void CPU::do_cycle()
 
 void CPU::trace()
 {
-    std::cout << (int)privilege_level << ": 0x" << std::hex << pc << std::endl;
+    //std::cout << (int)privilege_level << ": 0x" << std::hex << pc << std::endl;
 }
 
 void CPU::raise_exception(const Exception exception)
@@ -125,6 +127,10 @@ void CPU::raise_exception(const Exception exception, const u64 cause)
     const u64 original_pc = pc;
     const PrivilegeLevel original_privilege_level = privilege_level;
     exception_did_occur = true;
+
+    std::cout << "warning: exception occured with id " << (int)exception <<
+        ", pc = " << std::hex << pc << ", cause = " << std::hex << cause <<
+        std::dec << std::endl;
 
     if (privilege_level <= PrivilegeLevel::Supervisor && medeleg.should_delegate(exception))
     {

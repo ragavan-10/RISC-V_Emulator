@@ -17,3 +17,13 @@ enum class Exception
     LoadPageFault = 13,
     StoreOrAMOPageFault = 15
 };
+
+enum class Interrupt
+{
+    SupervisorSoftware = 1,
+    MachineSoftware = 3,
+    SupervisorTimer = 5,
+    MachineTimer = 7,
+    SupervisorExternal = 9,
+    MachineExternal = 11
+};

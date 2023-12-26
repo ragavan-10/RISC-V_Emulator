@@ -2,7 +2,7 @@
 #include "types.h"
 #include "bus.h"
 #include "csrs.h"
-#include "exceptions.h"
+#include "traps.h"
 
 class CPU
 {
@@ -55,7 +55,7 @@ public:
     // Machine trap handling
     DefaultCSR mscratch = {};           // Scratch register for machine trap handlers
     MEPC mepc = {};                     // Machine exception program counter
-    MCause mcause = {};                 // Machine trap cause
+    DefaultCSR mcause = {};             // Machine trap cause
     DefaultCSR mtval = {};              // Machine bad address or instruction
     MIP mip = {};                       // Machine interrupt pending
     UnimplementedCSR mtinst = {};       // Machine trap instruction (transformed)
@@ -78,11 +78,11 @@ public:
     BlankCSR mimpid = {};               // Implementation ID
     BlankCSR mhartid = {};              // ID of hart
 
-    // Exceptions
+    // Exceptions and interrupts
     void raise_exception(const Exception exception);
-    void raise_exception(const Exception exception, const u64 cause);
-    u64 get_exception_cause(const Exception exception);
-    bool exception_did_occur = false;
+    void raise_exception(const Exception exception, const u64 info);
+    void raise_interrupt(const Interrupt interrupt);
+    std::optional<Interrupt> get_pending_interrupt();
 
     // Extensions
     static consteval u64 get_supported_extensions()
@@ -104,4 +104,9 @@ public:
 
     // Harts can suspend themselves when waiting for interrupts
     bool waiting_for_interrupts = false;
+
+private:
+    u64 get_exception_cause(const Exception exception);
+    void handle_trap(const u64 cause, const u64 info, const bool interrupt);
+    bool trap_did_occur = false;
 };

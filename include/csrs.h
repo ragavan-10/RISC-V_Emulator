@@ -1,8 +1,6 @@
 #pragma once
 #include "types.h"
-#include "traps.h"
 #include <cstring>
-#include <cassert>
 #include <iostream>
 #include <optional>
 
@@ -233,7 +231,8 @@ struct MEPC : CSR
         // Whenever IALIGN=32, bit mepc[1] is masked on reads so that it appears
         // to be 0. This masking occurs also for the implicit read by the MRET instruction.
         // Though masked, mepc[1] remains writable when IALIGN=32.
-        std::cout << "TODO: respect IALIGN when adding C support" << std::endl;
+        if ((address & 0b10) != 0)
+            std::cout << "TODO: respect IALIGN when adding C support" << std::endl;
         return address;
     }
 };
@@ -424,7 +423,7 @@ struct MIP : CSR
 
     bool write(const u64 value, CPU&) override
     {
-        // WRARL
+        // WARL
         bits = value & 0b0000101010101010;
         return true;
     }
@@ -441,15 +440,19 @@ struct MIP : CSR
     bool msi() const { return ((bits >>  3) & 1) == 1; }
     bool ssi() const { return ((bits >>  1) & 1) == 1; }
 
+    void set_mei()   { bits |=  (1 << 11); }
+    void set_sei()   { bits |=  (1 << 9); }
     void set_mti()   { bits |=  (1 << 7); }
+    void set_sti()   { bits |=  (1 << 5); }
     void set_msi()   { bits |=  (1 << 3); }
+    void set_ssi()   { bits |=  (1 << 1); }
 
-    void clear_mei() { bits &= ~(bits << 11); }
-    void clear_sei() { bits &= ~(bits <<  9); }
-    void clear_mti() { bits &= ~(bits <<  7); }
-    void clear_sti() { bits &= ~(bits <<  5); }
-    void clear_msi() { bits &= ~(bits <<  3); }
-    void clear_ssi() { bits &= ~(bits <<  1); }
+    void clear_mei() { bits &= ~(1 << 11); }
+    void clear_sei() { bits &= ~(1 <<  9); }
+    void clear_mti() { bits &= ~(1 <<  7); }
+    void clear_sti() { bits &= ~(1 <<  5); }
+    void clear_msi() { bits &= ~(1 <<  3); }
+    void clear_ssi() { bits &= ~(1 <<  1); }
 };
 
 // Same fields as MIP, but meip = meie, seip = seie, etc.

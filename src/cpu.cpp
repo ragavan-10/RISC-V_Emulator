@@ -4,6 +4,7 @@
 #include "opcodes_zicsr.h"
 #include "opcodes_m.h"
 #include "opcodes_a.h"
+#include "traps.h"
 #include <iostream>
 #include <format>
 
@@ -41,7 +42,6 @@ void CPU::do_cycle()
         else faulty_address = pc + 3;
 
         raise_exception(Exception::InstructionAccessFault, faulty_address);
-        trap_did_occur = false;
         return;
     }
 
@@ -50,7 +50,6 @@ void CPU::do_cycle()
         instruction->instruction == 0)
     {
         raise_exception(Exception::IllegalInstruction, instruction->instruction);
-        trap_did_occur = false;
         return;
     }
 
@@ -98,17 +97,16 @@ void CPU::do_cycle()
             pc
         ));
 
-    if (!trap_did_occur)
+    if (!pending_trap.has_value())
         pc += sizeof(u32);
 
-    trap_did_occur = false;
     mcycle.increment(*this);
     minstret.increment(*this);
 }
 
 void CPU::trace()
 {
-    std::cout << (int)privilege_level << ": 0x" << std::hex << pc << std::endl;
+    std::cout << std::hex << pc << std::endl;
 }
 
 void CPU::raise_exception(const Exception exception)
@@ -127,37 +125,36 @@ void CPU::raise_exception(const Exception exception, const u64 info)
             std::dec << std::endl;
     }
 
-    handle_trap((u64)exception, info, false);
+    pending_trap = PendingTrap { (u64)exception, info, false };
 }
 
-void CPU::raise_interrupt(const Interrupt interrupt)
+std::optional<CPU::PendingTrap> CPU::get_pending_trap()
 {
-    handle_trap((u64)interrupt, 0, true);
-    trap_did_occur = false;
-}
+    // Deal with exceptions caused this CPU cycle first to avoid the issue of
+    // timer interrupts (for example) and ecall's happening at the same time
+    // and causing all sorts of strange bugs. Instead just deal with traps
+    // first. This is not exactly accurate to the spec.
+    if (pending_trap.has_value())
+    {
+        const auto trap = *pending_trap;
+        pending_trap.reset();
+        return trap;
+    }
 
-std::optional<Interrupt> CPU::get_pending_interrupt()
-{
+    // Check interrupts are enabled before we return any
     if ((privilege_level == PrivilegeLevel::Machine && mstatus.fields.mie == 0) ||
          (privilege_level == PrivilegeLevel::Supervisor && mstatus.fields.sie == 0))
         return std::nullopt;
 
-    /*
-        TODO: When UART, etc. interrupts exist:
-        1) Tell the CLIC it's pending
-        2) Modify claim register too
-        3) Set SEIP bit in MIP
-     */
-
     // Use bitmask to find all interrupts that are both pending and enabled
     // For each possible source, raise interrupt if found, and clear pending bit
     const MIP pending(mie.bits & mip.bits);
-    if (pending.mei()) { mip.clear_mei(); return Interrupt::MachineExternal;    }
-    if (pending.msi()) { mip.clear_msi(); return Interrupt::MachineSoftware;    }
-    if (pending.mti()) { mip.clear_mti(); return Interrupt::MachineTimer;       }
-    if (pending.sei()) { mip.clear_sei(); return Interrupt::SupervisorExternal; }
-    if (pending.ssi()) { mip.clear_ssi(); return Interrupt::SupervisorSoftware; }
-    if (pending.sti()) { mip.clear_sti(); return Interrupt::SupervisorTimer;    }
+    if (pending.mei()) { mip.clear_mei(); return PendingTrap { (u64)Interrupt::MachineExternal,     0, true }; }
+    if (pending.msi()) { mip.clear_msi(); return PendingTrap { (u64)Interrupt::MachineSoftware,     0, true }; }
+    if (pending.mti()) { mip.clear_mti(); return PendingTrap { (u64)Interrupt::MachineTimer,        0, true }; }
+    if (pending.sei()) { mip.clear_sei(); return PendingTrap { (u64)Interrupt::SupervisorExternal,  0, true }; }
+    if (pending.ssi()) { mip.clear_ssi(); return PendingTrap { (u64)Interrupt::SupervisorSoftware,  0, true }; }
+    if (pending.sti()) { mip.clear_sti(); return PendingTrap { (u64)Interrupt::SupervisorTimer,     0, true }; }
 
     return std::nullopt;
 }
@@ -173,12 +170,8 @@ void CPU::handle_trap(const u64 cause, const u64 info, const bool interrupt)
         lower privilege level.
      */
 
-    if (interrupt)
-        waiting_for_interrupts = false;
-
     const u64 original_pc = pc;
     const PrivilegeLevel original_privilege_level = privilege_level;
-    trap_did_occur = true;
 
     if (privilege_level <= PrivilegeLevel::Supervisor && medeleg.should_delegate(cause))
     {

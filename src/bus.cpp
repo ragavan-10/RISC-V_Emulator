@@ -5,7 +5,10 @@
 #include <iostream>
 #include <format>
 
-Bus::Bus(const u64 ram_size) : ram(ram_size) {}
+Bus::Bus(const u64 ram_size, const bool is_test_mode) :
+    ram(ram_size),
+    uart(!is_test_mode)
+{}
 
 #define READ_X(x) std::optional<u##x> Bus::read_##x(const u64 address)\
 {\
@@ -64,7 +67,6 @@ void Bus::write_file(const u64 address, const std::string& filename)
     file.read(reinterpret_cast<char*>(buffer), fileLen);
     file.close();
 
-    // TODO: memcpy fast-path
     for (u64 i = 0; i < fileLen; ++i)
         std::ignore = write_8(address + i, buffer[i]);
 }

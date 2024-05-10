@@ -3,6 +3,8 @@
 #include "bus.h"
 #include "csrs.h"
 #include "traps.h"
+#include "instruction.h"
+#include "compressed_instruction.h"
 
 class CPU
 {
@@ -30,6 +32,8 @@ public:
     u64 registers[32] = {};
     u64 pc = 0;
     Bus bus;
+
+    inline u64& sp() { return registers[2]; }
 
     PrivilegeLevel privilege_level = PrivilegeLevel::Machine;
 
@@ -102,6 +106,7 @@ public:
         // The "I" bit is set for RV64I, etc., and "E" is set for RV64E, etc.
         u64 bits = 0;
         bits |= (1 << 0);  // A
+        bits |= (1 << 2);  // C
         bits |= (1 << 8);  // E
         bits |= (1 << 12); // U
         bits |= (1 << 18); // S
@@ -113,5 +118,7 @@ public:
     bool emulating_test = false;
 
 private:
+    void execute_instruction(const Instruction instruction);
+    void execute_compressed_instruction(const CompressedInstruction instruction);
     u64 get_exception_cause(const Exception exception);
 };

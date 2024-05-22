@@ -13,7 +13,6 @@
 */
 struct CompressedInstruction
 {
-    // "register 0" actually denotes x8, etc.
     constexpr static uint8_t register_offset = 8;
 
     enum class Type
@@ -43,7 +42,12 @@ struct CompressedInstruction
     u8 get_rd() const
     {
         // 5 bits; 7-11 inclusive
-        return ((instruction >> 7) & 0b11111) + register_offset;
+        return ((instruction >> 7) & 0b11111);
+    }
+
+    u8 get_rd_with_offset() const
+    {
+        return ((instruction >> 7) & 0b111) + register_offset;
     }
 
     u8 get_rs1() const
@@ -55,7 +59,7 @@ struct CompressedInstruction
     u8 get_rs2() const
     {
         // 5 bits; 2-6 inclusive
-        return ((instruction >> 2) & 0b11111) + register_offset;
+        return ((instruction >> 2) & 0b11111);
     }
 
     u8 get_rd_alt() const
@@ -97,6 +101,10 @@ struct CompressedInstruction
                 return (instruction >> 5) & 0b11111111;
 
             case Type::CL:
+                return ((instruction << 1) & 0x40) // imm[6]
+                     | ((instruction >> 7) & 0x38) // imm[5:3]
+                     | ((instruction >> 4) & 0x4);
+
             case Type::CS:
             {
                 // Bits 10-12 followed by bits 5-6
@@ -111,65 +119,123 @@ struct CompressedInstruction
         }
     }
 
-    u64 get_none_zero_imm(const Type type) const
+    u64 get_none_zero_imm() const
     {
-        switch (type)
-        {
-            case Type::CI:
-            {
-                u16 nzimm =  ((instruction >> 3) & 0x200)  // nzimm[9]
-                            | ((instruction >> 2) & 0x10)  // nzimm[4]
-                            | ((instruction << 1) & 0x40)  // nzimm[6]
-                            | ((instruction << 4) & 0x180) // nzimm[8:7]
-                            | ((instruction << 3) & 0x20); // nzimm[5]
+        u64 nzimm = ((instruction >> 7) & 0x20) | ((instruction >> 2) & 0x1f);
 
-                // Sign-extend
-                if ((nzimm & 0x200) != 0)
-                    return (u64)(i64)(i32)(i16)(0xfc00 | nzimm);
-                else
-                    return nzimm;
-            }
-
-            default:
-                throw std::runtime_error("unspported instruction type");
-                return 0;
-        }
+        // Sign extend
+        if ((nzimm & 0x20) == 0) return nzimm;
+        else return (u64)(i64)(i8)(0xc0 | nzimm);
     }
 
-    u64 get_none_zero_unsigned_imm(const Type type) const
+    u64 get_lui_non_zero_imm() const
     {
-        switch (type)
-        {
-            case Type::CIW:
-            {
-                u16 nzuimm =  ((instruction >> 1) & 0x3c0) // nzuimm[9:6]
-                            | ((instruction >> 7) & 0x30)  // nzuimm[5:4]
-                            | ((instruction >> 2) & 0x8)   // nzuimm[3]
-                            | ((instruction >> 4) & 0x4);  // nzuimm[2]
+        u64 nzimm = ((instruction << 5) & 0x20000) | ((instruction << 10) & 0x1f000);
 
-                // TODO: raise error if zero
-                assert(nzuimm != 0);
-                return nzuimm;
-            }
-
-            default:
-                throw std::runtime_error("unspported instruction type");
-                return 0;
-        }
+        // Sign-extend
+        if ((nzimm & 0x20000) == 0) return nzimm;
+        else return (u64)(i64)(i32)(0xfffc0000 | nzimm);
     }
 
-    u8 get_offset() const
+    u64 get_addi16sp_none_zero_imm() const
     {
-        // Bits 10-12 followed by bits 2-6
-        const u8 upper = (instruction >> 10) & 0b111;
-        const u8 lower = (instruction >> 2) & 0b11111;
-        return (upper << 5) | lower;
+        u16 nzimm =  ((instruction >> 3) & 0x200)  // nzimm[9]
+                    | ((instruction >> 2) & 0x10)  // nzimm[4]
+                    | ((instruction << 1) & 0x40)  // nzimm[6]
+                    | ((instruction << 4) & 0x180) // nzimm[8:7]
+                    | ((instruction << 3) & 0x20); // nzimm[5]
+
+        // Sign-extend
+        if ((nzimm & 0x200) != 0)
+            return (u64)(i64)(i32)(i16)(0xfc00 | nzimm);
+        else
+            return nzimm;
+    }
+
+    u64 get_addi4spn_none_zero_unsigned_imm() const
+    {
+        u64 nzuimm = ((instruction >> 1) & 0x3c0) // znuimm[9:6]
+                    | ((instruction >> 7) & 0x30) // znuimm[5:4]
+                    | ((instruction >> 2) & 0x8)  // znuimm[3]
+                    | ((instruction >> 4) & 0x4); // znuimm[2]
+
+        // TODO: raise illegal instruction exception
+        assert(nzuimm != 0);
+        return nzuimm;
+    }
+
+    u64 get_ld_sd_imm() const
+    {
+        return ((instruction << 1) & 0xc0) | // imm[7:6]
+                ((instruction >> 7) & 0x38);
+    }
+
+    u64 get_jump_offset() const
+    {
+        u16 offset =
+              ((instruction >> 1) & 0x800) // offset[11]
+            | ((instruction << 2) & 0x400) // offset[10]
+            | ((instruction >> 1) & 0x300) // offset[9:8]
+            | ((instruction << 1) & 0x80)  // offset[7]
+            | ((instruction >> 1) & 0x40)  // offset[6]
+            | ((instruction << 3) & 0x20)  // offset[5]
+            | ((instruction >> 7) & 0x10)  // offset[4]
+            | ((instruction >> 2) & 0x0e); // offset[3:1]
+
+        // Sign extend
+        if ((offset & 0x800) == 0) return offset;
+        else return (u64)(i64)(i16)(0xf000 | offset);
+    }
+
+    u64 get_branch_offset() const
+    {
+        u16 offset =
+              ((instruction >> 4) & 0x100) // offset[8]
+            | ((instruction << 1) & 0xc0)  // offset[7:6]
+            | ((instruction << 3) & 0x20)  // offset[5]
+            | ((instruction >> 7) & 0x18)  // offset[4:3]
+            | ((instruction >> 2) & 0x6);  // offset[2:1]
+
+        // Sign extend
+        if ((offset & 0x100) == 0) return offset;
+        else return (u64)(i64)(i16)(0xfe00 | offset);
+    }
+
+    u64 get_lwsp_offset() const
+    {
+        return ((instruction << 4) & 0xc0)  // offset[7:6]
+             | ((instruction >> 7) & 0x20)  // offset[5]
+             | ((instruction >> 2) & 0x1c); // offset[4:2]
+    }
+
+    u64 get_ldsp_offset() const
+    {
+        return ((instruction << 4) & 0x1c0) // offset[8:6]
+             | ((instruction >> 7) & 0x20)  // offset[5]
+             | ((instruction >> 2) & 0x18); // offset[4:3]
+    }
+
+    u64 get_swsp_offset() const
+    {
+        return ((instruction >> 1) & 0xc0)  // offset[7:6]
+             | ((instruction >> 7) & 0x3c); // offset[5:2]
+    }
+
+    u64 get_sdsp_offset() const
+    {
+        return ((instruction >> 1) & 0x1c0) // offset[8:6]
+             | ((instruction >> 7) & 0x38); // offset[5:3]
     }
 
     u16 get_jump_target() const
     {
         // Bits 2-12
         return (instruction >> 2) & 0b11111111111;
+    }
+
+    u8 get_funct2() const
+    {
+        return (instruction >> 10) & 0x3;
     }
 
     u8 get_funct3() const
@@ -184,8 +250,8 @@ struct CompressedInstruction
         return (instruction >> 12) & 0b1111;
     }
 
-    u8 get_shamt() const
+    u64 get_shamt() const
     {
-        return get_imm(Type::CI) & 0b11111;
+        return ((instruction >> 7) & 0x20) | ((instruction >> 2) & 0x1f);
     }
 };

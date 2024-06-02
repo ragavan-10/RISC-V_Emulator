@@ -1,6 +1,4 @@
 #include "opcodes_zicsr.h"
-#include <format>
-#include <iostream>
 
 bool opcodes_zicsr(CPU& cpu, const Instruction& instruction)
 {
@@ -43,7 +41,7 @@ std::optional<u64> read_csr(CPU& cpu, const u16 address)
     if ((csr_address >= CSR_PMPCFG0 && csr_address <= CSR_PMPCFG15) ||
         (csr_address >= CSR_PMPADDR0 && csr_address <= CSR_PMPADDR63))
     {
-        std::cout << "TODO: pmpaddr*" << std::endl;
+        dbg("TODO: pmpaddr*");
         return 0;
     }
 
@@ -60,6 +58,10 @@ std::optional<u64> read_csr(CPU& cpu, const u16 address)
         }
     }
 
+    // Performance counters
+    if (csr_address >= CSR_MHPMCOUNTER3 && csr_address <= CSR_MHPMCOUNTER31)
+        return 0;
+
     // Check privilege level
     if (CSR::get_privilege_level(address) > cpu.privilege_level)
     {
@@ -75,8 +77,14 @@ std::optional<u64> read_csr(CPU& cpu, const u16 address)
         // TODO: raises exception when mstatus has certain value
 
         case CSR_SSTATUS:       return cpu.sstatus.read(cpu);
+        case CSR_SIE:           return cpu.sie.read(cpu);
+        case CSR_STVEC:         return cpu.stvec.read(cpu);
         case CSR_SCOUNTER_EN:   return cpu.scounteren.read(cpu);
+        case CSR_SSCRATCH:      return cpu.sscratch.read(cpu);
         case CSR_SEPC:          return cpu.sepc.read(cpu);
+        case CSR_SCAUSE:        return cpu.scause.read(cpu);
+        case CSR_STVAL:         return cpu.stval.read(cpu);
+        case CSR_SIP:           return cpu.sip.read(cpu);
         case CSR_SATP:          return cpu.satp.read(cpu);
         case CSR_MSTATUS:       return cpu.mstatus.read(cpu);
         case CSR_MISA:          return cpu.misa.read(cpu);
@@ -96,6 +104,7 @@ std::optional<u64> read_csr(CPU& cpu, const u16 address)
         case CSR_MCYCLE:        return cpu.mcycle.read(cpu);
         case CSR_MINSTRET:      return cpu.minstret.read(cpu);
         case CSR_CYCLE:         return cpu.cycle.read(cpu);
+        case CSR_TIME:          return cpu.time.read(cpu);
         case CSR_INSTRET:       return cpu.instret.read(cpu);
         case CSR_MVENDOR_ID:    return cpu.mvendorid.read(cpu);
         case CSR_MARCH_ID:      return cpu.marchid.read(cpu);
@@ -123,7 +132,7 @@ bool write_csr(CPU& cpu, const u64 value, const u16 address)
     if ((csr_address >= CSR_PMPCFG0 && csr_address <= CSR_PMPCFG15) ||
         (csr_address >= CSR_PMPADDR0 && csr_address <= CSR_PMPADDR63))
     {
-        std::cout << "TODO: pmp*" << std::endl;
+        dbg("TODO: pmp*");
         return true;
     }
 
@@ -147,15 +156,26 @@ bool write_csr(CPU& cpu, const u64 value, const u16 address)
         return false;
     }
 
+    // Performance counters
+    if (csr_address >= CSR_MHPMCOUNTER3 && csr_address <= CSR_MHPMCOUNTER31)
+        return true;
+
     if (!check_satp_trap(cpu, csr_address))
         return false;
 
     switch(csr_address)
     {
         // TODO: raises exception when mstatus has certain value (maybe? well is for reads idk)
+
         case CSR_SSTATUS:       return cpu.sstatus.write(value, cpu);
+        case CSR_SIE:           return cpu.sie.write(value, cpu);
+        case CSR_STVEC:         return cpu.stvec.write(value, cpu);
         case CSR_SCOUNTER_EN:   return cpu.scounteren.write(value, cpu);
+        case CSR_SSCRATCH:      return cpu.sscratch.write(value, cpu);
         case CSR_SEPC:          return cpu.sepc.write(value, cpu);
+        case CSR_SCAUSE:        return cpu.scause.write(value, cpu);
+        case CSR_STVAL:         return cpu.stval.write(value, cpu);
+        case CSR_SIP:           return cpu.sip.write(value, cpu);
         case CSR_SATP:          return cpu.satp.write(value, cpu);
         case CSR_MSTATUS:       return cpu.mstatus.write(value, cpu);
         case CSR_MISA:          return cpu.misa.write(value, cpu);
@@ -174,6 +194,7 @@ bool write_csr(CPU& cpu, const u64 value, const u16 address)
         case CSR_MNSTATUS:      return true; // Part of Smrnmi; needed for riscv-tests
         case CSR_MCYCLE:        return cpu.mcycle.write(value, cpu);
         case CSR_CYCLE:         return cpu.cycle.write(value, cpu);
+        case CSR_TIME:          return cpu.time.write(value, cpu);
         case CSR_MVENDOR_ID:    return cpu.mvendorid.write(value, cpu);
         case CSR_MARCH_ID:      return cpu.marchid.write(value, cpu);
         case CSR_MIMP_ID:       return cpu.mimpid.write(value, cpu);

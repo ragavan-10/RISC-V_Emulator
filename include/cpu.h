@@ -1,5 +1,5 @@
 #pragma once
-#include "types.h"
+#include "common.h"
 #include "bus.h"
 #include "csrs.h"
 #include "traps.h"
@@ -39,13 +39,19 @@ public:
 
     // Supervisor trap setup
     SStatus sstatus = {};               // Status bits; effective shadow of mstatus
+    SIE sie = {};                       // Supervisor shadow of mie
+    STVec stvec = {};                   // Supervisor trap-handler base address
     DefaultCSR scounteren = {};         // Supervisor counter enable
 
     // Supervisor trap handilng
-    SEPC sepc = {};
+    DefaultCSR sscratch = {};           // Scratch register for supervisor trap handlers
+    SEPC sepc = {};                     // Supervisor exception program counter
+    DefaultCSR scause = {};             // Supervisor trap cause
+    DefaultCSR stval = {};              // Supervisor bad address or instruction
+    SIP sip = {};                       // Supervisor shadow of mip
 
     // Supervisor Protection and Translation
-    UnimplementedCSR satp;              // Supervisor address translation and protection
+    SATP satp = {};                     // Supervisor address translation and protection
 
     // Machine trap setup
     MStatus mstatus = {};               // Status bits
@@ -74,6 +80,7 @@ public:
 
     // Unprivileged counters / timers
     Cycle cycle = {};                   // Cycle counter; shadows mcycle
+    BlankCSR time = {};                 // Timer for RDTIME instruction
     InstRet instret = {};               // Shadows minstret
 
     // Machine information registers
@@ -98,6 +105,24 @@ public:
     std::optional<PendingTrap> get_pending_trap();
     void handle_trap(const u64 cause, const u64 info, const bool interrupt);
 
+    enum class AccessType
+    {
+        Instruction,
+        Load,
+        Store,
+        Trace // For internal program use
+    };
+
+    [[nodiscard]] std::expected<u8,  Exception> read_8 (const u64 address, const AccessType type = AccessType::Load);
+    [[nodiscard]] std::expected<u16, Exception> read_16(const u64 address, const AccessType type = AccessType::Load);
+    [[nodiscard]] std::expected<u32, Exception> read_32(const u64 address, const AccessType type = AccessType::Load);
+    [[nodiscard]] std::expected<u64, Exception> read_64(const u64 address, const AccessType type = AccessType::Load);
+
+    [[nodiscard]] std::optional<Exception>      write_8 (const u64 address, const u8  value, const AccessType type = AccessType::Store);
+    [[nodiscard]] std::optional<Exception>      write_16(const u64 address, const u16 value, const AccessType type = AccessType::Store);
+    [[nodiscard]] std::optional<Exception>      write_32(const u64 address, const u32 value, const AccessType type = AccessType::Store);
+    [[nodiscard]] std::optional<Exception>      write_64(const u64 address, const u64 value, const AccessType type = AccessType::Store);
+
     // Extensions
     static consteval u64 get_supported_extensions()
     {
@@ -121,4 +146,115 @@ private:
     void execute_instruction(const Instruction instruction);
     void execute_compressed_instruction(const CompressedInstruction instruction);
     u64 get_exception_cause(const Exception exception);
+
+    std::expected<u64, Exception> virtual_address_to_physical(
+        const u64 address,
+        const AccessType type
+    );
+
+    inline PrivilegeLevel effective_privilege_level(const AccessType type) const
+    {
+        // When MPRV=1, load and store memory addresses are translated and
+        // protected, and endianness is applied, as though the current privilege
+        // mode were set to MPP
+        if ((type == AccessType::Load || type == AccessType::Store) && mstatus.fields.mprv == 1)
+            return (PrivilegeLevel)mstatus.fields.mpp;
+        else
+            return privilege_level;
+    }
+
+    inline bool paging_disabled(AccessType type) const
+    {
+        // TODO: cache
+        if (type == AccessType::Load || type == AccessType::Store)
+        {
+            return satp.get_mode() == SATP::ModeSettings::None ||
+                effective_privilege_level(type) == PrivilegeLevel::Machine;
+        }
+        else
+        {
+            return satp.get_mode() == SATP::ModeSettings::None ||
+                privilege_level == PrivilegeLevel::Machine;
+        }
+    }
+
+    // For mcause
+    u64 erroneous_virtual_address;
+
+private:
+    template<typename T>
+    std::optional<T> fetch_from_bus(const u64 address)
+    {
+        if (sizeof(T) == 1) return bus.read_8(address);
+        if (sizeof(T) == 2) return bus.read_16(address);
+        if (sizeof(T) == 4) return bus.read_32(address);
+        if (sizeof(T) == 8) return bus.read_64(address);
+        return std::nullopt;
+    }
+
+    template<typename T>
+    bool write_to_bus(const u64 address, const T value)
+    {
+        if (sizeof(T) == 1) return bus.write_8 (address, value);
+        if (sizeof(T) == 2) return bus.write_16(address, value);
+        if (sizeof(T) == 4) return bus.write_32(address, value);
+        else                return bus.write_64(address, value);
+    }
+
+    template<typename T>
+    std::expected<T, Exception> read(const u64 address, const AccessType type)
+    {
+        if (paging_disabled(type))
+        {
+            const std::optional<T> value = fetch_from_bus<T>(address);
+            if (!value)
+            {
+                if (type == AccessType::Instruction)
+                    return std::unexpected(Exception::InstructionAccessFault);
+                else
+                    return std::unexpected(Exception::LoadAccessFault);
+            }
+            else return *value;
+        }
+        else
+        {
+            std::expected<u64, Exception> physical_address = virtual_address_to_physical(address, type);
+            if (physical_address.has_value())
+            {
+                const std::optional<T> value = fetch_from_bus<T>(*physical_address);
+                if (!value)
+                {
+                    if (type == AccessType::Instruction)
+                        return std::unexpected(Exception::InstructionAccessFault);
+                    else
+                        return std::unexpected(Exception::LoadAccessFault);
+                }
+                else return *value;
+            }
+            else
+                return physical_address;
+        }
+    }
+
+    template<typename T>
+    std::optional<Exception> write(const u64 address, const T value, const AccessType type)
+    {
+        if (paging_disabled(type))
+        {
+            if (!write_to_bus<T>(address, value))
+                return Exception::StoreOrAMOAccessFault;
+            else
+                return std::nullopt;
+        }
+
+        const std::expected<u64, Exception> virtual_address = virtual_address_to_physical(address, type);
+        if (virtual_address.has_value())
+        {
+            if (!write_to_bus<T>(*virtual_address, value))
+                return Exception::StoreOrAMOAccessFault;
+            else
+                return std::nullopt;
+        }
+        else return virtual_address.error();
+    }
 };

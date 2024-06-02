@@ -1,44 +1,50 @@
 #pragma once
-#include "types.h"
-#include <cstring>
-#include <iostream>
-#include <optional>
+#include "common.h"
 
-#define CSR_SSTATUS     0x100
-#define CSR_SCOUNTER_EN 0x106
-#define CSR_SEPC        0x141
-#define CSR_SATP        0x180
-#define CSR_MSTATUS     0x300
-#define CSR_MISA        0x301
-#define CSR_MEDELEG     0x302
-#define CSR_MIDELEG     0x303
-#define CSR_MIE         0x304
-#define CSR_MTVEC       0x305
-#define CSR_MCOUNTER_EN 0x306
-#define CSR_MSCRATCH    0x340
-#define CSR_MEPC        0x341
-#define CSR_MCAUSE      0x342
-#define CSR_MTVAL       0x343
-#define CSR_MIP         0x344
-#define CSR_MTINST      0x34a
-#define CSR_MTVAL2      0x34b
-#define CSR_PMPCFG0     0x3a0
-#define CSR_PMPCFG15    0x3af
-#define CSR_PMPADDR0    0x3b0
-#define CSR_PMPADDR63   0x3ef
-#define CSR_MNSTATUS    0x744
-#define CSR_DEBUG_BEGIN 0x7a0
-#define CSR_TDATA1      0x7a1
-#define CSR_DEBUG_LIMIT 0x7af
-#define CSR_DEBUG_END   0x7bf
-#define CSR_MCYCLE      0xb00
-#define CSR_MINSTRET    0xb02
-#define CSR_CYCLE       0xc00
-#define CSR_INSTRET     0xc02
-#define CSR_MVENDOR_ID  0xf11
-#define CSR_MARCH_ID    0xf12
-#define CSR_MIMP_ID     0xf13
-#define CSR_MHART_ID    0xf14
+#define CSR_SSTATUS         0x100
+#define CSR_SIE             0x104
+#define CSR_STVEC           0x105
+#define CSR_SCOUNTER_EN     0x106
+#define CSR_SSCRATCH        0x140
+#define CSR_SEPC            0x141
+#define CSR_SCAUSE          0x142
+#define CSR_STVAL           0x143
+#define CSR_SIP             0x144
+#define CSR_SATP            0x180
+#define CSR_MSTATUS         0x300
+#define CSR_MISA            0x301
+#define CSR_MEDELEG         0x302
+#define CSR_MIDELEG         0x303
+#define CSR_MIE             0x304
+#define CSR_MTVEC           0x305
+#define CSR_MCOUNTER_EN     0x306
+#define CSR_MSCRATCH        0x340
+#define CSR_MEPC            0x341
+#define CSR_MCAUSE          0x342
+#define CSR_MTVAL           0x343
+#define CSR_MIP             0x344
+#define CSR_MTINST          0x34a
+#define CSR_MTVAL2          0x34b
+#define CSR_PMPCFG0         0x3a0
+#define CSR_PMPCFG15        0x3af
+#define CSR_PMPADDR0        0x3b0
+#define CSR_PMPADDR63       0x3ef
+#define CSR_MNSTATUS        0x744
+#define CSR_DEBUG_BEGIN     0x7a0
+#define CSR_TDATA1          0x7a1
+#define CSR_DEBUG_LIMIT     0x7af
+#define CSR_DEBUG_END       0x7bf
+#define CSR_MCYCLE          0xb00
+#define CSR_MINSTRET        0xb02
+#define CSR_MHPMCOUNTER3    0xb03
+#define CSR_MHPMCOUNTER31   0xb1f
+#define CSR_CYCLE           0xc00
+#define CSR_TIME            0xc01
+#define CSR_INSTRET         0xc02
+#define CSR_MVENDOR_ID      0xf11
+#define CSR_MARCH_ID        0xf12
+#define CSR_MIMP_ID         0xf13
+#define CSR_MHART_ID        0xf14
 
 enum class PrivilegeLevel
 {
@@ -191,6 +197,9 @@ struct MTVec : CSR
     }
 };
 
+// Does not shadow MTVec, but has the same format
+struct STVec : MTVec {};
+
 struct MCounterEnable : DefaultCSR
 {
     bool is_hardware_performance_monitor_enabled(const u32 number) const
@@ -232,7 +241,7 @@ struct MEPC : CSR
         // to be 0. This masking occurs also for the implicit read by the MRET instruction.
         // Though masked, mepc[1] remains writable when IALIGN=32.
         if ((address & 0b10) != 0)
-            std::cout << "TODO: respect IALIGN when adding C support" << std::endl;
+            dbg("TODO: respect IALIGN when adding C support");
         return address;
     }
 };
@@ -435,28 +444,97 @@ struct MIP : CSR
 
     bool mei() const { return ((bits >> 11) & 1) == 1; }
     bool sei() const { return ((bits >>  9) & 1) == 1; }
+    bool uei() const { return ((bits >>  8) & 1) == 1; }
     bool mti() const { return ((bits >>  7) & 1) == 1; }
     bool sti() const { return ((bits >>  5) & 1) == 1; }
     bool msi() const { return ((bits >>  3) & 1) == 1; }
     bool ssi() const { return ((bits >>  1) & 1) == 1; }
+    bool usi() const { return ((bits >>  0) & 1) == 1; }
 
     void set_mei()   { bits |=  (1 << 11); }
     void set_sei()   { bits |=  (1 << 9); }
+    void set_uei()   { bits |=  (1 << 8); }
     void set_mti()   { bits |=  (1 << 7); }
     void set_sti()   { bits |=  (1 << 5); }
     void set_msi()   { bits |=  (1 << 3); }
     void set_ssi()   { bits |=  (1 << 1); }
+    void set_usi()   { bits |=  (1 << 0); }
 
     void clear_mei() { bits &= ~(1 << 11); }
     void clear_sei() { bits &= ~(1 <<  9); }
+    void clear_uei() { bits &= ~(1 <<  8); }
     void clear_mti() { bits &= ~(1 <<  7); }
     void clear_sti() { bits &= ~(1 <<  5); }
     void clear_msi() { bits &= ~(1 <<  3); }
     void clear_ssi() { bits &= ~(1 <<  1); }
+    void clear_usi() { bits &= ~(1 <<  0); }
 };
 
 // Same fields as MIP, but meip = meie, seip = seie, etc.
 struct MIE : MIP {};
+
+// Shadows MIE
+struct SIE : CSR
+{
+    bool write(const u64 value, CPU& cpu) override;
+    std::optional<u64> read(CPU& cpu) override;
+};
+
+// Shadows MIP
+struct SIP : CSR
+{
+    bool write(const u64 value, CPU& cpu) override;
+    std::optional<u64> read(CPU& cpu) override;
+};
+
+struct SATP : CSR
+{
+    u64 bits = 0;
+
+    enum class ModeSettings
+    {
+        None = 0,
+        Sv39 = 8,
+        Sv48 = 9,
+        Sv57 = 10,
+        Sv64 = 11
+    };
+
+    bool write(const u64 value, CPU& cpu) override
+    {
+        u64 old_bits = bits;
+        bits = value;
+
+        // "if satp is written with an unsupported MODE, the entire write has no
+        // effect; no fields in satp are modified"
+        if (get_mode() != ModeSettings::None && get_mode() != ModeSettings::Sv39)
+            bits = old_bits;
+
+        return true;
+    }
+
+    std::optional<u64> read(CPU& cpu) override
+    {
+        return bits;
+    }
+
+    ModeSettings get_mode() const
+    {
+        return ModeSettings((bits >> 60) & 0b1111);
+    }
+
+    // ASID = address space identifier
+    u64 get_asid() const
+    {
+        return (bits >> 44) & 0b1111111111111111;
+    }
+
+    // PPN = physical page number
+    u64 get_ppn() const
+    {
+        return bits & 0b11111111111111111111111111111111111111111111;
+    }
+};
 
 struct Cycle : CSR
 {

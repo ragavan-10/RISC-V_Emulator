@@ -52,7 +52,7 @@ std::optional<u64> UART::read_byte(const u64 address)
     }
     else
     {
-        dbg("unmapped UART address ", dbg::hex(address));
+        std::cout << "unmapped UART address " << std::hex << address << std::endl;
         assert(false);
     }
 
@@ -73,7 +73,7 @@ bool UART::write_byte(const u64 address, const u8 value)
     }
     else
     {
-        dbg("unmapped UART address ", dbg::hex(address));
+        std::cout << "unmapped UART address " << std::hex << address << std::endl;
         assert(false);
     }
 

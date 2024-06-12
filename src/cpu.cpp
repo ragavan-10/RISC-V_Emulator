@@ -333,7 +333,7 @@ std::expected<u64, Exception> CPU::virtual_address_to_physical(
     const auto appropriate_exception = [&]()
     {
         if (type != AccessType::Trace)
-            dbg("MMU exception");
+            std::cout << "warning - MMU exception" << std::endl;
 
         // Store cause
         erroneous_virtual_address = address;
@@ -453,7 +453,7 @@ std::expected<u64, Exception> CPU::virtual_address_to_physical(
                 pte.set_d();
 
             // TODO: PMA or PMP check
-            dbg("TODO: pma or pmp MMU check missed");
+            std::cout << "warning - pma or pmp MMU check missed" << std::endl;
 
             // Update PTE value
             std::ignore = bus.write_64(a + vpns[i] * pte_size, pte.address);

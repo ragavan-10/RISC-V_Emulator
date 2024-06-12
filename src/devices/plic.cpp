@@ -76,7 +76,7 @@ u32* PLIC::get_register(const u64 address)
         const u16 context = (address - ENABLE_OFFSET) / ENABLE_CONTEXT_SIZE;
         if (context > PLIC_SUPPORTED_CONTEXTS)
         {
-            dbg("warning: unsupported context ", context);
+            std::cout << "warning: unsupported context " << context << std::endl;
             return nullptr;
         }
 
@@ -96,7 +96,7 @@ u32* PLIC::get_register(const u64 address)
         if (address == CONTEXT_1_CLAIM)
             return &context_claim[1];
 
-        dbg("warning: unsupported context with address 0x", dbg::hex(address));
+        std::cout << "warning: unsupported context with address 0x" << std::hex << address << std::endl;
         return nullptr;
     }
 

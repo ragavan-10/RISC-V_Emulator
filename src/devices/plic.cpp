@@ -76,7 +76,7 @@ u32* PLIC::get_register(const u64 address)
         const u16 context = (address - ENABLE_OFFSET) / ENABLE_CONTEXT_SIZE;
         if (context > PLIC_SUPPORTED_CONTEXTS)
         {
-            std::cout << "warning: unsupported context " << context << std::endl;
+            dbg("warning: unsupported context ", context);
             return nullptr;
         }
 
@@ -96,7 +96,7 @@ u32* PLIC::get_register(const u64 address)
         if (address == CONTEXT_1_CLAIM)
             return &context_claim[1];
 
-        std::cout << "warning: unsupported context with address 0x" << std::hex << address << std::endl;
+        dbg("warning: unsupported context with address 0x", dbg::hex(address));
         return nullptr;
     }
 
@@ -126,7 +126,7 @@ void PLIC::clock(CPU& cpu)
             // At least 1 interrupt identified - ignore priority for now and just
             // find the first one (unlikely two interrupts occur at once!)
             // TODO: pick the pending update with the *highest* priority,
-            //       not just the first one that pops up ;)
+            //       not just the first one that pops up...
 
             const u32 threshold = context_priority_threshold[context];
 

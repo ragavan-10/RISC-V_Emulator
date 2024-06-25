@@ -10,7 +10,9 @@
 
 UART::UART(bool listen_for_input) : listening_to_input(listen_for_input)
 {
-    if (listen_for_input)
+    dbg("remove me");
+    listening_to_input = false;
+    if (listen_for_input && 11==2)
     {
         if (tcgetattr(0, &original_termios) < 0)
             throw std::runtime_error("failed to get terminal settings");
@@ -52,7 +54,7 @@ std::optional<u64> UART::read_byte(const u64 address)
     }
     else
     {
-        std::cout << "unmapped UART address " << std::hex << address << std::endl;
+        dbg("unmapped UART address ", dbg::hex(address));
         assert(false);
     }
 
@@ -73,7 +75,7 @@ bool UART::write_byte(const u64 address, const u8 value)
     }
     else
     {
-        std::cout << "unmapped UART address " << std::hex << address << std::endl;
+        dbg("unmapped UART address ", dbg::hex(address));
         assert(false);
     }
 

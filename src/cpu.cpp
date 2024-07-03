@@ -6,7 +6,6 @@
 #include "opcodes_a.h"
 #include "opcodes_c.h"
 #include "traps.h"
-#include "sv39.h"
 
 extern "C" {
     #include <riscv-disas.h>
@@ -29,6 +28,8 @@ CPU::CPU(const u64 ram_size, const bool emulating_test) :
 
 void CPU::do_cycle()
 {
+    check_for_invalid_tlb();
+
     // Check is 16-bit aligned (32 if RVC weren't supported)
     if ((pc & 0b1) != 0)
     {
@@ -116,9 +117,11 @@ void CPU::raise_exception(const Exception exception, const u64 info)
 {
     if (exception != Exception::EnvironmentCallFromUMode &&
         exception != Exception::EnvironmentCallFromSMode &&
-        exception != Exception::EnvironmentCallFromMMode)
+        exception != Exception::EnvironmentCallFromMMode &&
+        emulating_test)
         dbg("warning: exception occurred", (int)exception, dbg::hex(pc), dbg::hex(info));
 
+    assert(!pending_trap.has_value());
     pending_trap = PendingTrap { (u64)exception, info, false };
 }
 
@@ -313,6 +316,102 @@ void CPU::execute_compressed_instruction(const CompressedInstruction instruction
         pc += sizeof(u16);
 }
 
+void CPU::invalidate_tlb()
+{
+    tlb_entries = 0;
+}
+
+std::expected<u64, Exception> CPU::tlb_lookup(
+    const u64 address,
+    const AccessType type
+)
+{
+    const u64 page_size = 4096;
+    const u64 virtual_page = address / page_size;
+
+    // Check TLB first
+    for (size_t i = 0; i < tlb_entries; ++i)
+    {
+        const auto& entry = tlb[i];
+        if (entry.valid && entry.virtual_page == virtual_page && entry.access_type == type)
+        {
+            // Before we return the page, we must bear in mind that we are technically
+            // "accessing" it. Hence, the A and D bits must be dealt with accordingly.
+            // (see step 7 of the MMU)
+            PageTableEntry pte(entry.pte);
+            if (pte.get_a() == 0 || (type == AccessType::Store && pte.get_d() == 0))
+            {
+                if (type != AccessType::Trace)
+                {
+                    pte.set_a();
+                    if (type == AccessType::Store)
+                        pte.set_d();
+
+                    // TODO: PMA or PMP check
+                    if (emulating_test)
+                        dbg("TODO: pma or pmp MMU check missed");
+
+                    // Update PTE value
+                    std::ignore = bus.write_64(entry.pte_address, pte.address);
+                }
+            }
+
+            return entry.physical_page * page_size + (address % page_size);
+        }
+    }
+
+    // Failed; perform proper lookup
+    const auto result = virtual_address_to_physical(address, type);
+    return result;
+}
+
+void CPU::add_tlb_entry(
+    const u64 virtual_page,
+    const u64 physical_page,
+    const PageTableEntry pte,
+    const u64 pte_address,
+    const AccessType type
+)
+{
+    // Evict oldest element if need be
+    if (tlb_entries == tlb.size())
+    {
+        for (size_t i = 0; i < tlb.size() - 1; ++i)
+            tlb[i] = tlb[i + 1];
+
+        tlb_entries--;
+    }
+
+    tlb[tlb_entries].physical_page = physical_page;
+    tlb[tlb_entries].virtual_page = virtual_page;
+    tlb[tlb_entries].pte = pte.address;
+    tlb[tlb_entries].pte_address = pte_address;
+    tlb[tlb_entries].access_type = type;
+    tlb[tlb_entries].valid = true;
+    tlb_entries++;
+}
+
+void CPU::check_for_invalid_tlb()
+{
+    // Certain staes modify page "permissions", like mstatus or the current privilege
+    // level. When these change, we can no longer assume that any previously cached
+    // translation is valid.
+
+    // NOTE: modifications to SATP is handled separately
+
+    // TODO: avoid branch by just putting this in csrs.cpp
+
+    if (mstatus.fields.mxr != last_mstatus.fields.mxr ||
+        mstatus.fields.sum != last_mstatus.fields.sum ||
+        mstatus.fields.mprv != last_mstatus.fields.mprv ||
+        mstatus.fields.mpp != last_mstatus.fields.mpp ||
+        last_privilege_level != privilege_level)
+        invalidate_tlb();
+
+    last_privilege_level = privilege_level;
+    last_mstatus = mstatus;
+}
+
 // Implements Sv39 paging - see RISC-V Instruction Set Manual Volume II - Privileged Architecture
 std::expected<u64, Exception> CPU::virtual_address_to_physical(
     const u64 address,
@@ -325,11 +424,13 @@ std::expected<u64, Exception> CPU::virtual_address_to_physical(
 
     const VirtualAddress va(address);
     const auto vpns = va.get_vpns();
+
     PageTableEntry pte(0);
+    u64 pte_address;
 
     const auto appropriate_exception = [&](int number)
     {
-        if (type != AccessType::Trace) {
+        if (type != AccessType::Trace && emulating_test)
             dbg(
                 "MMU exception",
                 dbg::hex(address),
@@ -338,9 +439,9 @@ std::expected<u64, Exception> CPU::virtual_address_to_physical(
                 privilege_level,
                 effective_privilege_level(type),
                 (int)mstatus.fields.mpp,
-                (int)mstatus.fields.mprv
+                (int)mstatus.fields.mprv,
+                dbg::hex(pc)
             );
-        }
 
         // Store cause
         erroneous_virtual_address = address;
@@ -363,7 +464,8 @@ std::expected<u64, Exception> CPU::virtual_address_to_physical(
         // 2. Let pte be the value of the PTE at address a+va.vpn[i]×PTESIZE.
         //    If accessing pte violates a PMA or PMP check, raise an access exception.
         // TODO: PMA and PMP checks
-        const auto pte_opt = bus.read_64(a + vpns[i] * pte_size);
+        pte_address = a + vpns[i] * pte_size;
+        const auto pte_opt = bus.read_64(pte_address);
         assert(pte_opt.has_value());
         pte = PageTableEntry(*pte_opt);
 
@@ -460,7 +562,8 @@ std::expected<u64, Exception> CPU::virtual_address_to_physical(
                 pte.set_d();
 
             // TODO: PMA or PMP check
-            dbg("TODO: pma or pmp MMU check missed");
+            if (emulating_test)
+                dbg("TODO: pma or pmp MMU check missed");
 
             // Update PTE value
             std::ignore = bus.write_64(a + vpns[i] * pte_size, pte.address);
@@ -477,20 +580,26 @@ std::expected<u64, Exception> CPU::virtual_address_to_physical(
         case 0:
         {
             u64 ppn = pte.get_ppn();
-            return (ppn << 12) | offset;
+            u64 addr = (ppn << 12) | offset;
+            add_tlb_entry(address / page_size, addr / page_size, pte, pte_address, type);
+            return addr;
         }
         case 1:
         {
             const auto ppns = pte.get_ppns();
-            return (ppns[2] << 30) | (ppns[1] << 21) | (vpns[0] << 12) | offset;
+            u64 addr = (ppns[2] << 30) | (ppns[1] << 21) | (vpns[0] << 12) | offset;
+            add_tlb_entry(address / page_size, addr / page_size, pte, pte_address, type);
+            return addr;
         }
         case 2:
         {
             const auto ppns = pte.get_ppns();
-            return (ppns[2] << 30) | (vpns[1] << 21) | (vpns[0] << 12) | offset;
+            u64 addr = (ppns[2] << 30) | (vpns[1] << 21) | (vpns[0] << 12) | offset;
+            add_tlb_entry(address / page_size, addr / page_size, pte, pte_address, type);
+            return addr;
         }
         default:
-            return appropriate_exception(9);
+            return appropriate_exception(10);
     }
 }
 

@@ -5,6 +5,7 @@
 #include "opcodes_m.h"
 #include "opcodes_a.h"
 #include "opcodes_c.h"
+#include "opcodes_f.h"
 #include "traps.h"
 
 extern "C" {
@@ -24,6 +25,8 @@ CPU::CPU(const u64 ram_size, const bool emulating_test) :
 
 
     registers[10] = 0;
+
+    init_opcodes_f();
 }
 
 void CPU::do_cycle()
@@ -279,6 +282,16 @@ void CPU::execute_instruction(const Instruction instruction)
 
             case OPCODES_A:
                 did_find_opcode = opcodes_a(*this, instruction);
+                break;
+
+            case OPCODES_F_1:
+            case OPCODES_F_2:
+            case OPCODES_F_3:
+            case OPCODES_F_4:
+            case OPCODES_F_5:
+            case OPCODES_F_6:
+            case OPCODES_F_7:
+                did_find_opcode = opcodes_f(*this, instruction);
                 break;
 
             default:

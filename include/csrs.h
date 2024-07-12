@@ -1,6 +1,9 @@
 #pragma once
 #include "common.h"
 
+#define CSR_FSFLAGS         0x001
+#define CSR_FRM             0x002
+#define CSR_FCSR            0x003
 #define CSR_SSTATUS         0x100
 #define CSR_SIE             0x104
 #define CSR_STVEC           0x105
@@ -157,9 +160,91 @@ struct DefaultCSR: CSR
         return true;
     }
 
-    std::optional<u64> read(CPU&) override {
+    std::optional<u64> read(CPU&) override
+    {
         return value;
     }
+};
+
+struct FCSR : CSR
+{
+    u32 bits = 0;
+
+    enum RoundingMode
+    {
+        RNE = 0,    // Round to nearest, ties to even
+        RTZ = 1,    // Round towards zero
+        RDN = 2,    // Round down
+        RUP = 3,    // Round up
+        RMM = 4,    // Round to nearest, ties to max magnitude
+        DYNAMIC = 7 // Dynamic rounding (i.e. use the CSR value, not the instruction's)
+    };
+
+    bool write(const u64 value, CPU&) override
+    {
+        /*
+            Bits 31–8 of the fcsr are reserved for other standard extensions,
+            including the "L" standard extension for decimal floating-point.
+            If these extensions are not present, implementations shall
+            ignore writes to these bits and supply a zero value when read.
+        */
+        bits = value & 0b00000000000000000000000011111111;
+        return true;
+    }
+
+    std::optional<u64> read(CPU&) override
+    {
+        return bits;
+    }
+
+    RoundingMode get_rounding_mode() const
+    {
+        return RoundingMode((bits >> 5) & 0b111);
+    }
+
+    void set_rounding_mode(u64 value)
+    {
+        bits &= 0b11111111111111111111111100011111;
+        bits |= ((value & 0b111) << 5);
+    }
+
+    u64 get_fflags() const { return bits & 0b11111; }
+
+    void set_fflags(u64 value)
+    {
+        bits &= 0b11111111111111111111111111100000;
+        bits |= (value & 0b11111);
+    }
+
+    u64 get_nx() const { return (bits >> 0) & 0b1; }
+    u64 get_uf() const { return (bits >> 1) & 0b1; }
+    u64 get_of() const { return (bits >> 2) & 0b1; }
+    u64 get_dz() const { return (bits >> 3) & 0b1; }
+    u64 get_nv() const { return (bits >> 4) & 0b1; }
+
+    void set_nx() { bits |=  (1 << 0); }
+    void set_uf() { bits |=  (1 << 1); }
+    void set_of() { bits |=  (1 << 2); }
+    void set_dz() { bits |=  (1 << 3); }
+    void set_nv() { bits |=  (1 << 4); }
+
+    void clear_nx() { bits &= ~(1 << 0); }
+    void clear_uf() { bits &= ~(1 << 1); }
+    void clear_of() { bits &= ~(1 << 2); }
+    void clear_dz() { bits &= ~(1 << 3); }
+    void clear_nv() { bits &= ~(1 << 4); }
+};
+
+struct FRM : CSR
+{
+    bool write(const u64 value, CPU& cpu) override;
+    std::optional<u64> read(CPU& cpu) override;
+};
+
+struct FSFlags : CSR
+{
+    bool write(const u64 value, CPU& cpu) override;
+    std::optional<u64> read(CPU& cpu) override;
 };
 
 struct MTVec : CSR

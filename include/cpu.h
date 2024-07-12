@@ -36,6 +36,14 @@ public:
 
     inline u64& sp() { return registers[2]; }
 
+    /*
+        Floating point registers and CSRs
+    */
+    float float_registers[32] = {};
+    FCSR fcsr = {};                     // The "actual" CSR register
+    FRM frm = {};                       // A "window" for the rounding mode
+    FSFlags fsflags = {};               // A "window" for the fflags
+
     PrivilegeLevel privilege_level = PrivilegeLevel::Machine;
 
     // Supervisor trap setup
@@ -133,6 +141,7 @@ public:
         u64 bits = 0;
         bits |= (1 << 0);  // A
         bits |= (1 << 2);  // C
+        bits |= (1 << 5);  // F
         bits |= (1 << 8);  // E
         bits |= (1 << 12); // U
         bits |= (1 << 18); // S

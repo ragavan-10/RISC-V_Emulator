@@ -6,6 +6,7 @@
 #include "traps.h"
 #include "instruction.h"
 #include "compressed_instruction.h"
+#include "opcodes_f.h"
 
 class CPU
 {
@@ -38,8 +39,80 @@ public:
 
     /*
         Floating point registers and CSRs
+
+        NOTE: Each register is a 64-bit wide double, but the floating point
+              opcodes expect them to be 32-bit wide. To solve this, "float
+              writes" to floating point registers are NaN-boxed - i.e. the
+              upper 32 bits are set to 1 so that, when read as a double, the
+              value becomes a NaN, and when read as a float the value is
+              "normal".
     */
-    float float_registers[32] = {};
+    double double_registers[32] = {};
+    struct FloatRegisters
+    {
+        CPU* cpu;
+        FloatRegisters() {}
+        FloatRegisters(CPU* cpu) : cpu(cpu) {}
+
+        void set(size_t index, float value)
+        {
+            // Perform NaN-boxing by setting all the "double bits" to 1
+            // NaNs are canonicalised
+            u32* u = (u32*)&value;
+            u64 boxed = 0xffffffff00000000 | (u64)*u;
+            memcpy(&cpu->double_registers[index], &boxed, sizeof(double));
+        }
+
+        float get(size_t index)
+        {
+            // Perform NaN-boxing by chopping off all the 1's from above
+            // If it's not actually a NaN-boxed value, return the canonical NaN
+            u64* u = (u64*)&cpu->double_registers[index];
+            u32 new_bits;
+            if((*u & 0xffffffff00000000) != 0xffffffff00000000)
+                new_bits = qNaN_float;
+            else
+                new_bits = 0xffffffff & *u;
+            float f;
+            memcpy(&f, &new_bits, sizeof(float));
+            return f;
+        }
+
+        float get_raw(size_t index)
+        {
+            // Floating point transfer operations don't do the NaN thing
+            u64* u = (u64*)&cpu->double_registers[index];
+            u32 new_bits = 0xffffffff & *u;
+            float f;
+            memcpy(&f, &new_bits, sizeof(float));
+            return f;
+        }
+
+        struct Proxy
+        {
+            FloatRegisters& parent;
+            size_t index;
+
+            Proxy(FloatRegisters& parent, size_t index) : parent(parent), index(index) {}
+
+            operator float() const
+            {
+                return parent.get(index);
+            }
+
+            Proxy& operator=(float value)
+            {
+                parent.set(index, value);
+                return *this;
+            }
+        };
+
+        Proxy operator[](size_t index)
+        {
+            return Proxy(*this, index);
+        }
+    };
+    FloatRegisters float_registers;     // For NaN-boxing
     FCSR fcsr = {};                     // The "actual" CSR register
     FRM frm = {};                       // A "window" for the rounding mode
     FSFlags fsflags = {};               // A "window" for the fflags
@@ -141,11 +214,12 @@ public:
         u64 bits = 0;
         bits |= (1 << 0);  // A
         bits |= (1 << 2);  // C
+        bits |= (1 << 3);  // D
         bits |= (1 << 5);  // F
         bits |= (1 << 8);  // E
-        bits |= (1 << 12); // U
-        bits |= (1 << 18); // S
-        bits |= (1 << 20); // U
+        bits |= (1 << 12); // M
+        bits |= (1 << 18); // S (supervisor mode)
+        bits |= (1 << 20); // U (user mode)
         return bits;
     }
 
@@ -228,20 +302,20 @@ private:
     template<typename T>
     std::optional<T> fetch_from_bus(const u64 address)
     {
-        if (sizeof(T) == 1) return bus.read_8(address);
-        if (sizeof(T) == 2) return bus.read_16(address);
-        if (sizeof(T) == 4) return bus.read_32(address);
-        if (sizeof(T) == 8) return bus.read_64(address);
+        if constexpr (sizeof(T) == 1) return bus.read_8(address);
+        if constexpr (sizeof(T) == 2) return bus.read_16(address);
+        if constexpr (sizeof(T) == 4) return bus.read_32(address);
+        if constexpr (sizeof(T) == 8) return bus.read_64(address);
         return std::nullopt;
     }
 
     template<typename T>
     bool write_to_bus(const u64 address, const T value)
     {
-        if (sizeof(T) == 1) return bus.write_8 (address, value);
-        if (sizeof(T) == 2) return bus.write_16(address, value);
-        if (sizeof(T) == 4) return bus.write_32(address, value);
-        else                return bus.write_64(address, value);
+        if constexpr (sizeof(T) == 1) return bus.write_8 (address, value);
+        if constexpr (sizeof(T) == 2) return bus.write_16(address, value);
+        if constexpr (sizeof(T) == 4) return bus.write_32(address, value);
+        else                          return bus.write_64(address, value);
     }
 
     template<typename T>

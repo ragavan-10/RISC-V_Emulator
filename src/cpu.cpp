@@ -12,8 +12,12 @@ extern "C" {
     #include <riscv-disas.h>
 }
 
-CPU::CPU(const u64 ram_size, const bool emulating_test) :
-    bus(ram_size, emulating_test) , emulating_test(emulating_test)
+CPU::CPU(
+    const uint64_t ram_size,
+    const bool emulating_test,
+    const std::optional<std::string> block_device_image
+) :
+    bus(ram_size, block_device_image, emulating_test), emulating_test(emulating_test)
 {
     // Set x0 to 0, sp to end of memory and pc to start of RAM
     registers[0] = 0;
@@ -24,6 +28,7 @@ CPU::CPU(const u64 ram_size, const bool emulating_test) :
 
     registers[10] = 0;
 
+    // Init floats
     float_registers = FloatRegisters(this);
     init_opcodes_f();
 }

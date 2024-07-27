@@ -11,7 +11,11 @@
 class CPU
 {
 public:
-    CPU(const uint64_t size, const bool emulating_test = false);
+    CPU(
+        const uint64_t ram_size,
+        const bool emulating_test,
+        const std::optional<std::string> block_device_image
+    );
     void do_cycle();
     void trace();
 

@@ -21,6 +21,9 @@
 #include <termios.h>
 #include <unistd.h>
 
+// For virtio endianness check
+#include <bit>
+
 // For nice formatting
 #define DBG_MACRO_NO_WARNING
 #include <dbg.h>
@@ -28,6 +31,12 @@
 // For RV64FD
 #include <cfenv>
 #include <cmath>
+
+// For virtio mmap
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 extern "C" {
     #include <riscv-disas.h>

@@ -5,13 +5,21 @@
 #include "devices/plic.h"
 #include "devices/clint.h"
 #include "devices/error_device.h"
+#include "devices/virtio_block_device.h"
 
 class CPU;
 
 class Bus
 {
+// Needs access to raw RAM
+friend VirtioBlockDevice;
+
 public:
-    Bus(const u64 ram_size, const bool is_test_mode = false);
+    Bus(
+        const u64 ram_size,
+        const std::optional<std::string> block_device_image,
+        const bool is_test_mode
+    );
 
     [[nodiscard]] std::optional<u8>  read_8 (const u64 address);
     [[nodiscard]] std::optional<u16> read_16(const u64 address);
@@ -32,6 +40,8 @@ public:
     constexpr static u64 clint_end = 0x2010000;
     constexpr static u64 uart_address = 0x3000000;
     constexpr static u64 uart_length = 0x100;
+    constexpr static u64 blk_address = 0x4000000;
+    constexpr static u64 blk_length = 0x200;
     constexpr static u64 ram_base = 0x80000000;
     constexpr static u64 programs_base = 0x80000000;
 
@@ -47,6 +57,6 @@ private:
     PLIC plic;
     CLINT clint;
     ErrorDevice error;
-
+    VirtioBlockDevice block_device;
     u64 clock_counter = 0;
 };

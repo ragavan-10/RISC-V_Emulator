@@ -24,9 +24,9 @@ CPU::CPU(
     registers[2] = Bus::ram_base + ram_size;
     pc = Bus::programs_base;
 
-
-
+    // Set x10 to hart id and x11 to 0
     registers[10] = 0;
+    registers[11] = 0;
 
     // Init floats
     float_registers = FloatRegisters(this);
@@ -35,8 +35,6 @@ CPU::CPU(
 
 void CPU::do_cycle()
 {
-    check_for_invalid_tlb();
-
     // Check is 16-bit aligned (32 if RVC weren't supported)
     if ((pc & 0b1) != 0)
     {
@@ -227,6 +225,8 @@ void CPU::handle_trap(const u64 cause, const u64 info, const bool interrupt)
         // Record previous privilege
         mstatus.fields.mpp = (u64)original_privilege_level;
     }
+
+    check_for_invalid_tlb();
 }
 
 u64 CPU::get_exception_cause(const Exception exception)
@@ -409,13 +409,9 @@ void CPU::add_tlb_entry(
 
 void CPU::check_for_invalid_tlb()
 {
-    // Certain staes modify page "permissions", like mstatus or the current privilege
+    // Certain states modify page "permissions", like mstatus or the current privilege
     // level. When these change, we can no longer assume that any previously cached
     // translation is valid.
-
-    // NOTE: modifications to SATP is handled separately
-
-    // TODO: avoid branch by just putting this in csrs.cpp
 
     if (mstatus.fields.mxr != last_mstatus.fields.mxr ||
         mstatus.fields.sum != last_mstatus.fields.sum ||

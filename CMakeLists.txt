@@ -17,8 +17,14 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 # Enable warnings, flags, etc.
 # Must have -ffloat-store (or /fp:precise) for RV64F's IEEE 754
 if(MSVC)
+    message(WARNING "Untested on MSVC - RV64FD might be inaccurate")
     target_compile_options(${PROJECT_NAME} PRIVATE /fp:precise /W4)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # Clang
+    target_compile_options(${PROJECT_NAME} PRIVATE -Werror -Wall -Wextra -pedantic -Wno-unused-parameter -O3 -g -fdiagnostics-color=always)
+    message(WARNING "You are using Clang, so -ffloat-store is not supported. Do not expect accurate RV64FD emulation!")
 else()
+    # Probably GCC
     target_compile_options(${PROJECT_NAME} PRIVATE -ffloat-store -Werror -Wall -Wextra -pedantic -Wno-unused-parameter -O3 -g -fdiagnostics-color=always)
 endif()
 

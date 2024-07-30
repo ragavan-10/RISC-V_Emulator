@@ -1,13 +1,6 @@
 #include "cpu.h"
 #include "io.h"
 
-typedef std::pair<std::string, std::optional<std::string>> Arg;
-static std::array<Arg, 3> args = {{
-    { "--test",  "n" },
-    { "--image", std::nullopt },
-    { "--blk",   std::nullopt }
-}};
-
 static void print_usage(char** argv)
 {
     std::cerr << "usage: " << argv[0] << " [--test] [--image FILE] [--blk FILE]" << std::endl;
@@ -15,6 +8,13 @@ static void print_usage(char** argv)
 
 int main(int argc, char** argv)
 {
+    typedef std::pair<std::string, std::optional<std::string>> Arg;
+    std::array<Arg, 3> args = {{
+        { "--test",         "n" },
+        { "--image",        std::nullopt },
+        { "--blk",          std::nullopt }
+    }};
+
     // Parse argc
     int valid_skip = -1;
     for (int i = 1; i < argc; i++)
@@ -53,39 +53,27 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    try
+    // Set up CPU
+    CPU cpu(
+        test_mode ? (16 * 1024 * 1024) : (2UL * 1024 * 1024 * 1024),
+        test_mode,
+        args[2].second
+    );
+
+    // Load main program / image
+    std::ignore = cpu.bus.write_file(Bus::programs_base, *args[1].second);
+
+    // Enter emulation loop
+    while(1)
     {
-        // Set up CPU
-        CPU cpu(
-            128 * 1024 * 1024,
-            test_mode,
-            args[2].second
-        );
-        cpu.bus.write_file(Bus::programs_base, *args[1].second);
+        if (test_mode)
+            cpu.trace();
 
-        // Enter emulation loop
-        const auto emulate = [&]<bool test_mode>()
-        {
-            while(1)
-            {
-                if constexpr(test_mode)
-                    cpu.trace();
+        cpu.do_cycle();
+        cpu.bus.clock(cpu);
 
-                cpu.do_cycle();
-                cpu.bus.clock(cpu);
-
-                const std::optional<CPU::PendingTrap> trap = cpu.get_pending_trap();
-                if (trap.has_value())
-                    cpu.handle_trap(trap->cause, trap->info, trap->is_interrupt);
-            }
-        };
-        if (test_mode) emulate.operator()<true>();
-        else           emulate.operator()<false>();
-
-    }
-    catch (std::string& s)
-    {
-        // Test pass (or fail!)
-        return (s == "pass");
+        const std::optional<CPU::PendingTrap> trap = cpu.get_pending_trap();
+        if (trap.has_value())
+            cpu.handle_trap(trap->cause, trap->info, trap->is_interrupt);
     }
 }

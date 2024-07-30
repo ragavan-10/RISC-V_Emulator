@@ -17,7 +17,7 @@ def run_test(file_path, file_name):
     # Emulate test
     with open(os.devnull, 'w') as devnull:
         try:
-            result = subprocess.run([emulator, "--testing", file_path], stdout=devnull, stderr=devnull)
+            result = subprocess.run([emulator, "--test", "--image", file_path], stdout=devnull, stderr=devnull)
         except KeyboardInterrupt:
             print("Running " + file_name)
             exit()
@@ -25,7 +25,7 @@ def run_test(file_path, file_name):
     print(" " * 40, end='\r')
 
     # Check the return status
-    if result.returncode == 1:
+    if result.returncode == 0:
         passed += 1
         return True
     else:
@@ -37,10 +37,15 @@ def pad(name):
     return name + (amount-len(name)) * " "
 
 def main():
+    global passed, failed
+    if not os.path.exists(tests_dir):
+        print(f"Directory {tests_dir} does not exist.")
+        return
+
     tests = []
 
-    # Buid list of tests
-    for file_name in os.listdir(tests_dir):
+    # Build list of tests
+    for file_name in sorted(os.listdir(tests_dir)):
         # Ignore "non-tests"
         if file_name[-3:] != "bin":
             continue
@@ -49,7 +54,8 @@ def main():
         if os.path.isfile(file_path):
             tests.append({
                 "name": file_path,
-                "display_name": pad(file_path.replace(tests_dir + "/", ""))
+                "display_name": pad(file_path.replace(tests_dir + "/", "")),
+                "passed": False
             })
 
     for test in tests:

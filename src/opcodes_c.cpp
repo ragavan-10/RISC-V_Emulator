@@ -198,7 +198,7 @@ void c_lwsp(CPU& cpu, const CompressedInstruction instruction)
 {
     const u8 rd = instruction.get_rd();
     const u64 offset = instruction.get_lwsp_offset();
-    const auto value = cpu.read_32(cpu.registers[2] + offset);
+    const auto value = cpu.read_32(cpu.sp() + offset);
 
     if (!value)
     {
@@ -213,7 +213,7 @@ void c_ldsp(CPU& cpu, const CompressedInstruction instruction)
 {
     const u8 rd = instruction.get_rd();
     const u64 offset = instruction.get_ldsp_offset();
-    const auto value = cpu.read_64(cpu.registers[2] + offset);
+    const auto value = cpu.read_64(cpu.sp() + offset);
 
     if (!value)
     {
@@ -257,7 +257,7 @@ void c_swsp(CPU& cpu, const CompressedInstruction instruction)
     const u8 rs2 = instruction.get_rs2();
     const u64 offset = instruction.get_swsp_offset();
     const auto error = cpu.write_32(
-        cpu.registers[2] + offset,
+        cpu.sp() + offset,
         cpu.registers[rs2]
     );
 
@@ -273,7 +273,7 @@ void c_sdsp(CPU& cpu, const CompressedInstruction instruction)
     const u8 rs2 = instruction.get_rs2();
     const u64 offset = instruction.get_sdsp_offset();
     const auto error = cpu.write_64(
-        cpu.registers[2] + offset,
+        cpu.sp() + offset,
         cpu.registers[rs2]
     );
 
@@ -310,7 +310,7 @@ void c_jalr(CPU& cpu, const CompressedInstruction instruction)
 void c_beqz(CPU& cpu, const CompressedInstruction instruction)
 {
     // Minus 2 as will be added by the caller
-    const u8 rs1 = instruction.get_rd_with_offset();
+    const u8 rs1 = instruction.get_rs1_alt();
     if (cpu.registers[rs1] == 0)
         cpu.pc += instruction.get_branch_offset() - 2;
 }
@@ -318,21 +318,9 @@ void c_beqz(CPU& cpu, const CompressedInstruction instruction)
 void c_bnez(CPU& cpu, const CompressedInstruction instruction)
 {
     // Minus 2 as will be added by the caller
-    const u8 rs1 = instruction.get_rd_with_offset();
+    const u8 rs1 = instruction.get_rs1_alt();
     if (cpu.registers[rs1] != 0)
         cpu.pc += instruction.get_branch_offset() - 2;
-}
-
-void c_addi(CPU& cpu, const CompressedInstruction instruction)
-{
-    const u64 imm = instruction.get_none_zero_imm();
-    cpu.registers[instruction.get_rd()] += imm;
-}
-
-void c_addiw(CPU& cpu, const CompressedInstruction instruction)
-{
-    const u64 imm = instruction.get_none_zero_imm();
-    cpu.registers[instruction.get_rd()] = (u64)(i64)(i32)(cpu.registers[instruction.get_rd()] + imm);
 }
 
 void c_li(CPU& cpu, const CompressedInstruction instruction)
@@ -347,10 +335,26 @@ void c_lui(CPU& cpu, const CompressedInstruction instruction)
     cpu.registers[instruction.get_rd()] = imm;
 }
 
+void c_addi(CPU& cpu, const CompressedInstruction instruction)
+{
+    const u64 imm = instruction.get_none_zero_imm();
+    cpu.registers[instruction.get_rd()] += imm;
+}
+
+void c_addiw(CPU& cpu, const CompressedInstruction instruction)
+{
+    const u64 imm = instruction.get_none_zero_imm();
+    const u64 result = cpu.registers[instruction.get_rd()] + imm;
+
+    // Take the lower 32 bits, then sign extend to 64
+    const u64 extended = (i64)(i32)(result & 0xffffffff);
+    cpu.registers[instruction.get_rd()] = extended;
+}
+
 void c_addi16sp(CPU& cpu, const CompressedInstruction instruction)
 {
     const u64 imm = instruction.get_addi16sp_none_zero_imm();
-    cpu.sp() = cpu.sp() + imm;
+    cpu.sp() += imm;
 }
 
 void c_addi4spn(CPU& cpu, const CompressedInstruction instruction)
@@ -361,8 +365,7 @@ void c_addi4spn(CPU& cpu, const CompressedInstruction instruction)
 
 void c_slli(CPU& cpu, const CompressedInstruction instruction)
 {
-    cpu.registers[instruction.get_rd()] =
-        cpu.registers[instruction.get_rd()] << instruction.get_shamt();
+    cpu.registers[instruction.get_rd()] <<= instruction.get_shamt();
 }
 
 void c_srli(CPU& cpu, const CompressedInstruction instruction)
@@ -400,8 +403,12 @@ void c_add(CPU& cpu, const CompressedInstruction instruction)
 void c_addw(CPU& cpu, const CompressedInstruction instruction)
 {
     const u8 rd = instruction.get_rs1_alt();
-    const u8 rs2 = instruction.get_rd_alt();
-    cpu.registers[rd] = (u64)(i64)(i32)(cpu.registers[rd] + cpu.registers[rs2]);
+    const u8 rs2 = instruction.get_rs2_alt();
+
+    // Take the lower 32 bits, then sign extend to 64
+    const u64 result = cpu.registers[rd] + cpu.registers[rs2];
+    const u64 extended = (i64)(i32)(result & 0xffffffff);
+    cpu.registers[rd] = extended;
 }
 
 void c_and(CPU& cpu, const CompressedInstruction instruction)
@@ -425,7 +432,6 @@ void c_xor(CPU& cpu, const CompressedInstruction instruction)
     cpu.registers[rd] ^= cpu.registers[rs2];
 }
 
-
 void c_sub(CPU& cpu, const CompressedInstruction instruction)
 {
     const u8 rd = instruction.get_rd_with_offset();
@@ -437,7 +443,11 @@ void c_subw(CPU& cpu, const CompressedInstruction instruction)
 {
     const u8 rd = instruction.get_rd_with_offset();
     const u8 rs2 = instruction.get_rs2_alt();
-    cpu.registers[rd] = (u64)(i64)(i32)(cpu.registers[rd] - cpu.registers[rs2]);
+
+    // Take the lower 32 bits, then sign extend to 64
+    const u64 result = cpu.registers[rd] - cpu.registers[rs2];
+    const u64 extended = (i64)(i32)(result & 0xffffffff);
+    cpu.registers[rd] = extended;
 }
 
 void c_ebreak(CPU& cpu, const CompressedInstruction instruction)

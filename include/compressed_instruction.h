@@ -68,8 +68,7 @@ struct CompressedInstruction
 
     u8 get_rs1_alt() const
     {
-        // 3 bits; 7-9 inclusive
-        return ((instruction >> 7) & 0b111) + register_offset;
+        return get_rd_with_offset();
     }
 
     u8 get_rs2_alt() const
@@ -165,7 +164,7 @@ struct CompressedInstruction
     u64 get_ld_sd_imm() const
     {
         return ((instruction << 1) & 0xc0) | // imm[7:6]
-                ((instruction >> 7) & 0x38);
+                ((instruction >> 7) & 0x38); // imm[5:3]
     }
 
     u64 get_jump_offset() const

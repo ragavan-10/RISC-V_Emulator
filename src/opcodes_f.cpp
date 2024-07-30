@@ -41,7 +41,10 @@ bool check_fs_field(CPU& cpu, bool is_write)
     // See Table 3.4 of the privileged spec ("FS and XS state transitions")
     // In short, if it's a write we become "dirty".
     if (is_write)
+    {
         cpu.mstatus.fields.fs = 3;
+        cpu.check_for_invalid_tlb();
+    }
 
     return true;
 }
@@ -1149,7 +1152,7 @@ void fclass_d(CPU& cpu, const Instruction instruction)
 void c_fldsp(CPU& cpu, const CompressedInstruction instruction)
 {
     const u64 offset = instruction.get_ldsp_offset();
-    const u64 address = cpu.registers[2] + offset;
+    const u64 address = cpu.sp() + offset;
 
     const auto value = cpu.read_64(address);
     if (!value)
@@ -1164,7 +1167,7 @@ void c_fldsp(CPU& cpu, const CompressedInstruction instruction)
 void c_fsdsp(CPU& cpu, const CompressedInstruction instruction)
 {
     const u64 offset = instruction.get_sdsp_offset();
-    const u64 address = cpu.registers[2] + offset;
+    const u64 address = cpu.sp() + offset;
 
     const double value = cpu.double_registers[instruction.get_rs2()];
 
